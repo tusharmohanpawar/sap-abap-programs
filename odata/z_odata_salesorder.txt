@@ -1,0 +1,18 @@
+Project: Z_ODATA_SALESORDER
+
+Steps:
+1. Create CDS View (Z_CDS_SALESORDER)
+2. Go to SEGW
+3. Create Project: Z_ODATA_SALESORDER
+4. Import CDS View
+5. Generate Runtime Objects
+6. Register Service in /IWFND/MAINT_SERVICE
+
+Entity: SalesOrder
+Fields:
+- VBELN
+- ERDAT
+- AUART
+
+Use:
+- Fetch Sales Order Data in UI5 / Fiori App
