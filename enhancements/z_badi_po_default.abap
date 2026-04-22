@@ -1,7 +1,9 @@
 *---------------------------------------------------------------------*
-* BADI : ME_PROCESS_PO_CUST
-* Description : Default plant in PO item
-* 👉 Use: BADI: ME_PROCESS_PO_CUST
+* Object Type : BADI
+* BADI Name   : ME_PROCESS_PO_CUST
+* Transaction : ME21N / ME22N
+* Description : Default plant in purchase order item
+* Business Use: Defaulting
 *---------------------------------------------------------------------*
 
 METHOD if_ex_me_process_po_cust~process_item.
