@@ -1,0 +1,17 @@
+Smartform Name: Z_SF_INVOICE
+
+Structure:
+- Header Window → Displays Sales Order (VBAK)
+- Item Table → Displays Items (VBAP)
+- Footer → Total Amount
+
+Logic Used:
+- Loop on VBAP for item display
+- Calculate total using SUM
+- Display company logo in header
+
+Fields Used:
+- VBAK-VBELN (Sales Order)
+- VBAP-MATNR (Material)
+- VBAP-KWMENG (Quantity)
+- VBAP-NETWR (Net Value)
