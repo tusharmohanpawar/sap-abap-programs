@@ -83,6 +83,9 @@ Ascendia – SAP S/4HANA Company Code Rollout
 * CDS Views & OData (Basics)
 * SAP BTP (Exposure)
 * Smart Forms & Adobe Forms
+- CDS Views with Associations & Annotations
+- OData Service Development (SEGW)
+- SAP BTP Application Development
 
 ---
 
