@@ -1,7 +1,9 @@
 *---------------------------------------------------------------------*
-* Enhancement : Sales Order Validation
+* Object Type : User Exit
+* Enhancement : MV45AFZZ
+* Transaction : VA01 / VA02
 * Description : Prevent order creation for blocked materials
-* Where used: MV45AFZZ (Sales Order User Exit)
+* Business Use: Validation
 *---------------------------------------------------------------------*
 
 FORM userexit_check_material.
