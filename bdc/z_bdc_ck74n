@@ -1,0 +1,327 @@
+*&---------------------------------------------------------------------*
+*& Report ZCK74N_BDC
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zck74n_bdc.
+* Include bdcrecx1_s:
+
+TABLES : sscrfields.
+TYPES : BEGIN OF str_cki64a,
+          klvar     TYPE cki64a-klvar,
+          tvers     TYPE cki64a-tvers,
+          losgr     TYPE char13,"cki64a-losgr,"STRING,
+          matnr     TYPE cki64a-matnr,
+          werks     TYPE cki64a-werks,
+          kadat     TYPE char10,"cki64a-kadat,
+*         bwdat     TYPE wdat,
+          lst_setnr TYPE rk70e-lst_setnr,
+          typps     TYPE rk70l-typps,
+*          herk2     TYPE rk70l-herk2,
+          menge     TYPE char13,"rk70l-menge,"STRING,
+          meeht     TYPE rk70l-meeht,
+          ltext     TYPE rk70l-ltext,
+          lpreis    TYPE STRING,"rk70l-lpreis,"STRING,
+          kstar     TYPE rk70l-kstar,
+          bezug     TYPE cki64a-bezug,
+          sicht     TYPE cki64a-sicht,
+        END OF str_cki64a.
+
+DATA: it_cki64a TYPE TABLE OF str_cki64a,
+      wa_cki64a type str_cki64a,
+      raw_data  TYPE truxs_t_text_data.
+DATA:   bdcdata LIKE bdcdata    OCCURS 0 WITH HEADER LINE.
+DATA:   messtab LIKE bdcmsgcoll OCCURS 0 WITH HEADER LINE.
+
+SELECTION-SCREEN FUNCTION KEY 1.
+INITIALIZATION.
+sscrfields-functxt_01 = 'Template'.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK a WITH FRAME TITLE TEXT-001.
+PARAMETERS : p_file   TYPE rlgrap-filename,
+             bdc_mode LIKE ctu_params-dismode DEFAULT 'E'.
+SELECTION-SCREEN END OF BLOCK a.
+
+
+*AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+*CALL FUNCTION 'F4_FILENAME'
+*    EXPORTING
+*      program_name = syst-cprog
+*     DYNPRO_NUMBER       = SYST-DYNNR
+**     FIELD_NAME   = ' '
+*    IMPORTING
+*      file_name    = p_file.
+*CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
+*    EXPORTING
+**     I_FIELD_SEPERATOR    = I_FIELD_SEPERATOR
+*      i_line_header        = 'X'
+*      i_tab_raw_data       = raw_data
+*      i_filename           = p_file
+*    TABLES
+*      i_tab_converted_data = it_cki64a
+* EXCEPTIONS
+*     CONVERSION_FAILED    = 1
+*     OTHERS               = 2
+*    .
+*START-OF-SELECTION.
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  CALL FUNCTION 'F4_FILENAME'
+    EXPORTING
+      program_name  = syst-cprog
+      dynpro_number = syst-dynnr
+    IMPORTING
+      file_name     = p_file.
+
+AT SELECTION-SCREEN.
+  IF sscrfields-ucomm = 'FC01'.
+    PERFORM download_template.
+    STOP.
+  ENDIF.
+
+START-OF-SELECTION.
+  " Load the Excel here, after the user has confirmed the file
+  CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
+    EXPORTING
+      i_line_header        = 'X'
+      i_tab_raw_data       = raw_data
+      i_filename           = p_file
+    TABLES
+      i_tab_converted_data = it_cki64a
+    EXCEPTIONS
+      OTHERS               = 2.
+
+  LOOP AT it_cki64a INTO wa_cki64a.
+
+*perform open_group.
+    PERFORM bdc_dynpro      USING 'SAPLCKDI' '4610'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '/00'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'CKI64A-LOSGR'.
+    PERFORM bdc_field       USING 'CKI64A-KLVAR'
+                                  wa_cki64a-KLVAR."<---------------------------
+    PERFORM bdc_field       USING 'CKI64A-TVERS'
+                                  wa_cki64a-TVERS."<-----------------------
+    PERFORM bdc_field       USING 'CKI64A-LOSGR'
+                                  wa_cki64a-LOSGR."<----------------------
+    PERFORM bdc_field       USING 'CKI64A-MATNR'
+                                  wa_cki64a-MATNR. "<----------------------
+    PERFORM bdc_field       USING 'CKI64A-WERKS'
+                                  wa_cki64a-WERKS."'LIGC'."<----------------------
+    PERFORM bdc_dynpro      USING 'SAPLCKDI' '4610'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '/00'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'CKI64A-KADAT'.
+    PERFORM bdc_field       USING 'CKI64A-KADAT'
+                                   wa_cki64a-KADAT."'08.09.2026'."<----------------------
+*    PERFORM bdc_field       USING 'CKI64A-BIDAT'
+*                                  '31.12.9999'."<----------------------
+*    PERFORM bdc_field       USING 'CKI64A-BWDAT'
+*                                  '08.09.2026'."<----------------------
+    PERFORM bdc_dynpro      USING 'SAPLKKDI' '1301'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'RK70L-KSTAR(01)'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '/00'.
+    PERFORM bdc_field       USING 'RK70E-LST_SETNR'
+                                   wa_cki64a-LST_SETNR."'    1'."<----------------------
+    PERFORM bdc_field       USING 'RK70L-TYPPS(01)'
+                                  wa_cki64a-TYPPS."'V'."<----------------------
+*   PERFORM bdc_field       USING 'RK70L-HERK2(01)'
+*                                   wa_cki64a-HERK2."'Development'."<----------------------
+    PERFORM bdc_field       USING 'RK70L-MENGE(01)'
+                                  wa_cki64a-MENGE."'                   1'.
+    PERFORM bdc_field       USING 'RK70L-MEEHT(01)'
+                                    wa_cki64a-MEEHT."'EA'."<----------------------
+    PERFORM bdc_field       USING 'RK70L-LTEXT(01)'
+                                  wa_cki64a-LTEXT."'Development'."<----------------------
+    PERFORM bdc_field       USING 'RK70L-LPREIS(01)'
+                                  wa_cki64a-LPREIS."'             18621.49'."<----------------------
+    PERFORM bdc_field       USING 'RK70L-KSTAR(01)'
+                                  wa_cki64a-KSTAR."'601008'."<----------------------
+    PERFORM bdc_dynpro      USING 'SAPLKKDI' '1301'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'RK70L-KSTAR(01)'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=SICH'.
+    PERFORM bdc_field       USING 'RK70E-LST_SETNR'
+                                  wa_cki64a-LST_SETNR."'    1'."<----------------------
+    PERFORM bdc_dynpro      USING 'SAPLCKDI' '4610'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=SAVE'.
+    PERFORM bdc_field       USING 'CKI64A-MATNR'
+                                  wa_cki64a-MATNR."'186055730'."<-Repeat---------------------
+    PERFORM bdc_field       USING 'CKI64A-WERKS'
+                                  wa_cki64a-WERKS."'LIGC'."<----Repeat------------------
+    PERFORM bdc_field       USING 'CKI64A-BEZUG'
+                                  '1'."<----------------------
+    PERFORM bdc_field       USING 'CKI64A-SICHT'
+                                  '1'."<----------------------
+*perform bdc_transaction using 'CK74N'.
+*perform close_group.
+*    CALL TRANSACTION 'CK74N' USING bdcdata MESSAGES INTO messtab
+*          MODE 'A'
+*          UPDATE 'S'.
+*    DATA: lv_str TYPE string.
+*    LOOP AT messtab INTO DATA(wa_msg).
+*    CALL FUNCTION 'FORMAT_MESSAGE'
+*        EXPORTING
+*          id        = wa_msg-msgid
+*          lang      = '-D'
+*          no        = wa_msg-msgnr
+*          v1        = wa_msg-msgv1
+*          v2        = wa_msg-msgv2
+*          v3        = wa_msg-msgv3
+*          v4        = wa_msg-msgv4
+*        IMPORTING
+*          msg       = lv_str
+*        EXCEPTIONS
+*          not_found = 1
+*          OTHERS    = 2.
+*      IF sy-subrc <> 0.
+** Implement suitable error handling here
+*      ENDIF.
+*      WRITE: / lv_str.
+*      CLEAR: wa_msg, lv_str.
+*    ENDLOOP.
+*    CLEAR: wa_cki64a.
+*    REFRESH: bdcdata.
+    CALL TRANSACTION 'CK74N' USING bdcdata MESSAGES INTO messtab
+      MODE bdc_mode
+      UPDATE 'S'.
+
+DATA: lv_str TYPE string.
+
+" 1. Own success/error summary based on sy-subrc
+CASE sy-subrc.
+  WHEN 0.
+    WRITE: / icon_led_green AS ICON,
+             'OK  ', wa_cki64a-matnr, wa_cki64a-werks.
+  WHEN 1.
+    WRITE: / icon_led_yellow AS ICON,
+             'WARN', wa_cki64a-matnr, wa_cki64a-werks.
+  WHEN 2.
+    WRITE: / icon_led_red AS ICON,
+             'ERR ', wa_cki64a-matnr, wa_cki64a-werks.
+  WHEN OTHERS.
+    WRITE: / 'sy-subrc =', sy-subrc.
+ENDCASE.
+
+" 2. Dump SAP messages properly
+LOOP AT messtab.
+  IF messtab-msgid IS INITIAL OR messtab-msgnr IS INITIAL.
+    CONTINUE.
+  ENDIF.
+  CALL FUNCTION 'FORMAT_MESSAGE'
+    EXPORTING
+      id   = messtab-msgid
+      lang = 'E'
+      no   = messtab-msgnr
+      v1   = messtab-msgv1
+      v2   = messtab-msgv2
+      v3   = messtab-msgv3
+      v4   = messtab-msgv4
+    IMPORTING
+      msg  = lv_str
+    EXCEPTIONS
+      OTHERS = 1.
+  IF sy-subrc <> 0.
+    CONCATENATE messtab-msgid messtab-msgnr
+                messtab-msgv1 INTO lv_str SEPARATED BY space.
+  ENDIF.
+  WRITE: / '   ', messtab-msgtyp, lv_str.
+ENDLOOP.
+
+" 3. Reset everything for next iteration
+CLEAR: wa_cki64a, lv_str.
+REFRESH: bdcdata.
+CLEAR:   messtab.
+REFRESH: messtab.
+
+  ENDLOOP.
+
+FORM bdc_dynpro USING program dynpro.
+  CLEAR bdcdata.
+  bdcdata-program  = program.
+  bdcdata-dynpro   = dynpro.
+  bdcdata-dynbegin = 'X'.
+  APPEND bdcdata.
+ENDFORM.
+
+
+FORM bdc_field USING fnam fval.
+
+  CLEAR bdcdata.
+  bdcdata-fnam = fnam.
+  bdcdata-fval = fval.
+  APPEND bdcdata.
+
+ENDFORM.
+
+
+FORM download_template.
+
+  DATA: lt_template TYPE STANDARD TABLE OF string,
+        lv_line     TYPE string,
+        lv_filename TYPE string,
+        lv_path     TYPE string,
+        lv_fullpath TYPE string,
+        lv_rc       TYPE i.
+
+* Header Row
+  CONCATENATE
+      'Costing Variant'
+      'Version'
+      'Lot Size'
+      'Material'
+      'Plant'
+      'Costing Date'
+      'Set Number'
+      'Item Category'
+      'Quantity'
+      'Unit of Measure'
+      'Long Text'
+      'Price'
+      'Cost Element'
+      'Reference'
+      'View'
+  INTO lv_line
+  SEPARATED BY cl_abap_char_utilities=>horizontal_tab.
+
+  APPEND lv_line TO lt_template.
+
+* Save Dialog
+  CALL METHOD cl_gui_frontend_services=>file_save_dialog
+    EXPORTING
+      default_extension = 'xls'
+      default_file_name = 'Template.xls'
+      file_filter       = 'Excel Files (*.xls)|*.xls|'
+    CHANGING
+      filename          = lv_filename
+      path              = lv_path
+      fullpath          = lv_fullpath
+      user_action       = lv_rc.
+
+  IF lv_rc <> cl_gui_frontend_services=>action_ok.
+    RETURN.
+  ENDIF.
+
+* Download File
+  CALL FUNCTION 'GUI_DOWNLOAD'
+    EXPORTING
+      filename = lv_fullpath
+      filetype = 'ASC'
+    TABLES
+      data_tab = lt_template
+    EXCEPTIONS
+      OTHERS   = 1.
+
+  IF sy-subrc = 0.
+    MESSAGE 'Excel template downloaded successfully.' TYPE 'S'.
+  ELSE.
+    MESSAGE 'Error while downloading template.' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
