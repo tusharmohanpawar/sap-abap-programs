@@ -1,0 +1,382 @@
+REPORT zmr21_bdc
+       NO STANDARD PAGE HEADING LINE-SIZE 255.
+
+TABLES : sscrfields.
+
+INCLUDE zmr21_bdc_excel.
+
+TYPES : BEGIN OF ty_final,
+          budat(10),
+          bukrs     TYPE bukrs,
+          werks     TYPE werks,
+          matnr     TYPE matnr,
+          bwtar     TYPE bwtar_d,
+*          nprice    TYPE cki_mr21_0250-newvalpr,
+          nprice    TYPE string,
+        END OF ty_final.
+
+DATA : it_bdcdata TYPE STANDARD TABLE OF bdcdata,
+       wa_bdcdata TYPE bdcdata,
+       it_final   TYPE TABLE OF ty_final,
+       wa_final   LIKE LINE OF it_final,
+       it_text    TYPE truxs_t_text_data,
+       it_bdcmsg  TYPE TABLE OF bdcmsgcoll WITH HEADER LINE,
+       wa_msg     TYPE bdcmsgcoll,
+       w_textout  LIKE t100-text.
+
+SELECTION-SCREEN BEGIN OF BLOCK a WITH FRAME TITLE TEXT-001.
+  PARAMETERS : p_file   TYPE rlgrap-filename,
+               bdc_mode LIKE ctu_params-dismode DEFAULT 'E'.
+SELECTION-SCREEN END OF BLOCK a.
+
+SELECTION-SCREEN BEGIN OF LINE.
+  SELECTION-SCREEN PUSHBUTTON (25) w_button USER-COMMAND but1.
+SELECTION-SCREEN END OF LINE.
+
+INITIALIZATION.
+*----add displayed text string to buttons-----*
+  w_button = 'Download Excel Template'.
+
+AT SELECTION-SCREEN.
+  IF sscrfields-ucomm EQ 'BUT1'.
+    PERFORM excel.
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+
+  CALL FUNCTION 'F4_FILENAME'
+    EXPORTING
+      program_name  = syst-cprog
+      dynpro_number = syst-dynnr
+    IMPORTING
+      file_name     = p_file.
+
+START-OF-SELECTION.
+
+  CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
+    EXPORTING
+      i_line_header        = 'X'
+      i_tab_raw_data       = it_text
+      i_filename           = p_file
+    TABLES
+      i_tab_converted_data = it_final
+    EXCEPTIONS
+      conversion_failed    = 1
+      OTHERS               = 2.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+  LOOP AT it_final INTO wa_final.
+
+    REFRESH it_bdcdata.
+    CONDENSE wa_final-nprice.
+
+    PERFORM bdc_dynpro      USING 'SAPRCKM_MR21' '0201'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'MR21HEAD-WERKS'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=ENTR'.
+    PERFORM bdc_field       USING 'MR21HEAD-BUDAT'
+                                  wa_final-budat.
+    PERFORM bdc_field       USING 'MR21HEAD-BUKRS'
+                                  wa_final-bukrs.
+    PERFORM bdc_field       USING 'MR21HEAD-WERKS'
+                                  wa_final-werks.
+    PERFORM bdc_field       USING 'MR21HEAD-SCREEN_VARIANT'
+                                  'MR21_LAGERMATERIAL_0250'.
+
+    PERFORM bdc_dynpro      USING 'SAPRCKM_MR21' '0201'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=ENTR'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'CKI_MR21_0250-MATNR(01)'.
+    PERFORM bdc_field       USING 'MR21HEAD-SCREEN_VARIANT'
+                                  'MR21_LAGERMATERIAL_BWKEY_0250'.
+    PERFORM bdc_field       USING 'CKI_MR21_0250-MATNR(01)'
+                                  wa_final-matnr.
+
+    PERFORM bdc_dynpro      USING 'SAPRCKM_MR21' '0201'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=ENTR'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'CKI_MR21_0250-NEWSTAPR(01)'.
+    PERFORM bdc_field       USING 'MR21HEAD-SCREEN_VARIANT'
+                                  'MR21_LAGERMATERIAL_BWKEY_0250'.
+    PERFORM bdc_field       USING 'CKI_MR21_0250-NEWVALPR(01)'
+                                  wa_final-nprice.
+    PERFORM bdc_field       USING 'CKI_MR21_0250-NEWSTAPR(01)'
+                                  wa_final-nprice.
+
+    PERFORM bdc_dynpro      USING 'SAPRCKM_MR21' '0201'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=TAB2'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'CKI_MR21_0250-MATNR(02)'.
+    PERFORM bdc_field       USING 'MR21HEAD-SCREEN_VARIANT'
+                                  'MR21_LAGERMATERIAL_BWKEY_0250'.
+
+    PERFORM bdc_dynpro      USING 'SAPRCKM_MR21' '0201'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=ENTR'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'CKI_MR21_0250-NEWSTAPR(01)'.
+    PERFORM bdc_field       USING 'MR21HEAD-SCREEN_VARIANT'
+                                  'MR21_LAGERMATERIAL_BWKEY_0250'.
+    PERFORM bdc_field       USING 'CKI_MR21_0250-NEWVALPR(01)'
+                                  wa_final-nprice.
+    PERFORM bdc_field       USING 'CKI_MR21_0250-NEWSTAPR(01)'
+                                  wa_final-nprice.
+
+    PERFORM bdc_dynpro      USING 'SAPRCKM_MR21' '0201'.
+    PERFORM bdc_field       USING 'BDC_OKCODE'
+                                  '=SAVE'.
+    PERFORM bdc_field       USING 'BDC_CURSOR'
+                                  'CKI_MR21_0250-MATNR(02)'.
+    PERFORM bdc_field       USING 'MR21HEAD-SCREEN_VARIANT'
+                                  'MR21_LAGERMATERIAL_BWKEY_0250'.
+
+    CALL TRANSACTION 'MR21'
+                      USING it_bdcdata
+                      MODE bdc_mode
+                      UPDATE 'S' MESSAGES INTO it_bdcmsg.
+  ENDLOOP.
+
+END-OF-SELECTION.
+
+  LOOP AT it_bdcmsg INTO wa_msg.
+
+    CALL FUNCTION 'MESSAGE_TEXT_BUILD'
+      EXPORTING
+        msgid               = wa_msg-msgid
+        msgnr               = wa_msg-msgnr
+        msgv1               = wa_msg-msgv1
+        msgv2               = wa_msg-msgv2
+        msgv3               = wa_msg-msgv3
+        msgv4               = wa_msg-msgv4
+      IMPORTING
+        message_text_output = w_textout.
+
+    WRITE: / '', w_textout.
+
+  ENDLOOP.
+*&---------------------------------------------------------------------*
+*&      Form  BDC_DYNPRO
+*&---------------------------------------------------------------------*
+FORM bdc_dynpro  USING program dynpro.
+
+  CLEAR wa_bdcdata.
+  wa_bdcdata-program = program.
+  wa_bdcdata-dynpro = dynpro.
+  wa_bdcdata-dynbegin = 'X'.
+  APPEND wa_bdcdata TO it_bdcdata.
+  CLEAR wa_bdcdata.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  BDC_FIELD
+*&---------------------------------------------------------------------*
+FORM bdc_field  USING  fnam fval.
+
+  IF fval IS NOT INITIAL.
+    CLEAR wa_bdcdata.
+    wa_bdcdata-fnam = fnam.
+    wa_bdcdata-fval = fval.
+    APPEND wa_bdcdata TO it_bdcdata.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  EXCEL
+*&---------------------------------------------------------------------*
+FORM excel.
+
+  PERFORM : fill_data,
+            download_data,
+            modify_cells,
+            cell_border.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  FILL_DATA
+*&---------------------------------------------------------------------*
+FORM fill_data.
+
+  wa_data-field1  = 'Posting Date'.
+  wa_data-field2  = 'Compay Code'.
+  wa_data-field3  = 'Plant'.
+  wa_data-field4  = 'Material'.
+  wa_data-field5  = 'Valuation Type'.
+  wa_data-field6  = 'New Price'.
+  APPEND wa_data TO it_data.
+  CLEAR wa_data.
+
+  CREATE OBJECT application 'EXCEL.APPLICATION'.
+  SET PROPERTY OF application 'VISIBLE' = 1.
+  CALL METHOD OF
+    application
+      'WORKBOOKS' = workbook.
+
+*----Create New Worksheet-----*
+  SET PROPERTY OF application 'SHEETSINNEWWORKBOOK' = 1.
+  CALL METHOD OF
+    workbook
+    'ADD'.
+
+*-----Create First Excel Sheet-------*
+  CALL METHOD OF
+    application
+    'WORKSHEETS' = sheet
+    EXPORTING
+      #1  = 1.
+
+  CALL METHOD OF
+    sheet
+    'ACTIVATE'.
+  SET PROPERTY OF sheet 'NAME' = 'Excel Template'.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  DOWNLOAD_DATA
+*&---------------------------------------------------------------------*
+FORM download_data.
+
+  ld_rowindx = 1.
+  LOOP AT it_data INTO wa_data.
+
+    ld_rowindx = sy-tabix.
+
+*--Fill Columns for current row-----*
+    CLEAR ld_colindx.
+    DO.
+      ASSIGN COMPONENT sy-index OF STRUCTURE wa_data TO <fs>.
+      IF sy-subrc NE 0.
+        EXIT.
+      ENDIF.
+      ld_colindx = sy-index.
+      CALL METHOD OF
+      sheet
+      'CELLS' = cells
+      EXPORTING
+        #1 = ld_rowindx
+        #2 = ld_colindx.
+      SET PROPERTY OF cells 'VALUE' = <fs>.
+    ENDDO.
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  MODIFY_CELLS
+*&---------------------------------------------------------------------*
+FORM modify_cells .
+*----Formatting of column number row---------*
+  CALL METHOD OF
+  application
+  'CELLS' = cell1
+  EXPORTING
+    #1 = 1
+    #2 = 1.
+
+*--End of range cell-----*
+  CALL METHOD OF
+  application
+  'CELLS' = cell2
+  EXPORTING
+    #1 = 1
+    #2 = 10.
+
+  CALL METHOD OF
+  application
+  'RANGE' = range
+  EXPORTING
+    #1 = cell1
+    #2 = cell2.
+
+*-----Modify properties of cell range------*
+  "Set font details of range
+  GET PROPERTY OF range 'FONT' = font.
+  SET PROPERTY OF font 'SIZE' = 12.
+
+  "Set cell shading properties of range
+  CALL METHOD OF
+    range
+      'INTERIOR' = shading.
+  SET PROPERTY OF shading 'COLORINDEX' = 0.
+  SET PROPERTY OF shading 'PATTERN' = 1.
+  FREE OBJECT shading.
+*---End of formatting of column number row----*
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  CELL_BORDER
+*&---------------------------------------------------------------------*
+FORM cell_border.
+*------Modify properties of cell range--------*
+
+  FREE range.
+  CALL METHOD OF application 'CELLS' = cell1
+  EXPORTING
+    #1 = 1
+    #2 = 1.
+
+  CALL METHOD OF application 'CELLS' = cell2
+  EXPORTING
+    #1 = 1
+   #2 = 10.
+
+  CALL METHOD OF
+  application
+  'RANGE' = range
+  EXPORTING
+    #1 = cell1
+    #2 = cell2.
+
+*---Set border properties of range-----*
+  CALL METHOD OF
+  range
+  'BORDER' = border
+  EXPORTING
+    #1 = '1'.
+  SET PROPERTY OF border 'LINESTYLE' = '1'.
+  SET PROPERTY OF border 'WEIGHT' = 1.
+  FREE OBJECT border.
+
+  CALL METHOD OF
+  range
+  'BORDER' = border
+  EXPORTING
+    #1 = '2'.
+  SET PROPERTY OF border 'LINESTYLE' = '1'.
+  SET PROPERTY OF border 'WEIGHT' = 2.
+  FREE OBJECT border.
+
+  CALL METHOD OF
+range
+'BORDER' = border
+EXPORTING
+  #1 = '3'.
+  SET PROPERTY OF border 'LINESTYLE' = '1'.
+  SET PROPERTY OF border 'WEIGHT' = 2.
+  FREE OBJECT border.
+
+  CALL METHOD OF
+range
+'BORDER' = border
+EXPORTING
+ #1 = '4'.
+  SET PROPERTY OF border 'LINESTYLE' = '1'.
+  SET PROPERTY OF border 'WEIGHT' = 2.
+  FREE OBJECT border.
+
+*---Set column to auto fet to width of text------*
+  CALL METHOD OF
+    sheet
+    'SAVEAS'
+    EXPORTING
+      #1 = 'D:\SAP_DATA\upload_INFOTYPE0006.XLS'
+      #2 = 1.
+
+  FREE OBJECT sheet.
+  FREE OBJECT workbook.
+  FREE OBJECT application.
+ENDFORM.
