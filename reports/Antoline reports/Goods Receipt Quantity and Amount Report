@@ -1,0 +1,1327 @@
+*&    (C)   P R I M U S  TECHSYSTEMS PVT. LTD.
+*&*--------------------------------------------------------------------*
+*& CLIENT           : SHRIRAM PISTON
+*& REPORT           : ZMM101P
+*& DESCRIPTION      : Good receipts (Quantity / Amount)
+*& DEVLOPER NAME    : Tushar Pawar.
+*& FUNCTIONAL NAME  : Kalpesh Sawant
+*& DATE             : 12/06/2026
+*& TCODE            : ZME12
+*&*--------------------------------------------------------------------*
+"displaying purchase order, material, goods receipt quantity, and amount-related information.
+DATA: nodata.
+DATA: d_index LIKE sy-tabix.
+
+DATA: aux9 TYPE n.
+DATA: options TYPE ctu_params.
+DATA:   bdcdata LIKE bdcdata    OCCURS 0 WITH HEADER LINE.
+
+
+** STRUCTURE TO STORE THE LAST THREE GOODS RECEIPTS
+DATA: BEGIN OF i_ekbe OCCURS 0.
+        INCLUDE STRUCTURE ekbe.
+      DATA: END OF i_ekbe.
+
+DATA: contador TYPE i.
+DATA: d_contrato LIKE eket-ebeln,
+      d_posicion LIKE eket-ebelp.
+
+DATA: BEGIN OF i_last_albaranes OCCURS 0,
+        contrato LIKE eket-ebeln,
+        posicion LIKE eket-ebelp,
+        matnr    LIKE mara-matnr,
+        albaran  LIKE ekbe-xblnr,
+        cantidad LIKE ekbe-menge,
+        fecha    LIKE ekbe-budat,
+      END OF i_last_albaranes.
+
+
+
+DATA: BEGIN OF tab OCCURS 0.
+DATA: xselp(1).
+INCLUDE STRUCTURE zmm101p.
+DATA: lfbnr LIKE ekbe-lfbnr.
+DATA:      END OF tab.
+
+DATA: BEGIN OF tab2 OCCURS 0.
+DATA: xselp(1).
+INCLUDE STRUCTURE zmm101p.
+DATA: lfbnr LIKE ekbe-lfbnr.
+DATA:      END OF tab2.
+
+
+*Structure for sorting in PDF and EXCEL
+DATA: BEGIN OF tab3 OCCURS 0.
+DATA: xselp(1).
+INCLUDE STRUCTURE zmm101p.
+DATA: lfbnr LIKE ekbe-lfbnr.
+DATA: END OF tab3.
+
+
+*Add ZM position text
+DATA: BEGIN OF i_fact OCCURS 0,
+        ebeln       LIKE ekpo-ebeln,
+        ebelp       LIKE ekpo-ebelp,
+        textp(1000) TYPE c,
+      END OF i_fact.
+
+*Internal table for text function structure
+DATA:BEGIN OF i_lines OCCURS 0.
+       INCLUDE STRUCTURE tline.
+     DATA:END OF i_lines.
+*Structure for function export.
+DATA: BEGIN OF r_header.
+        INCLUDE STRUCTURE thead.
+      DATA: END OF r_header.
+
+DATA: d_name LIKE thead-tdname.
+
+
+***alv**
+TYPE-POOLS kkblo .
+TYPE-POOLS: slis.
+TYPE-POOLS cxtab.
+DATA: ct_fieldcat TYPE slis_t_fieldcat_alv, "WITH HEADER LINE,
+      st_fieldcat TYPE slis_fieldcat_alv.
+DATA: l_variant  TYPE disvariant.
+DATA: s_grid_settings TYPE lvc_s_glay,
+      titletext       TYPE lvc_title.
+DATA: is_u_layout TYPE slis_layout_alv.
+DATA: ct_sort TYPE slis_t_sortinfo_alv.
+DATA: gs_sort TYPE slis_sortinfo_alv.
+
+TYPES: BEGIN OF slis_layout_alv.
+         INCLUDE TYPE slis_layout_main.
+         INCLUDE TYPE slis_layout_alv_spec.
+       TYPES: END OF slis_layout_alv.
+
+TYPES: BEGIN OF tt_output_ssfo.     " Smartforms Output Item
+         INCLUDE TYPE zglbe_po_ssfo_st.
+       TYPES: END OF tt_output_ssfo.
+TYPES: BEGIN OF tt_output_ssfo_hd.  " Smartforms Output Header
+         INCLUDE TYPE zglbe_hd_ssfo_st.
+       TYPES: END OF tt_output_ssfo_hd.
+DATA: lt_output_ssfo             TYPE TABLE OF tt_output_ssfo,
+      ls_output_ssfo             LIKE LINE OF lt_output_ssfo,
+      ls_output_ssfo_hd          TYPE tt_output_ssfo_hd,
+      gs_att_content_text_header TYPE LINE OF soli_tab.
+
+CONSTANTS: gc_max_soli_char         TYPE i VALUE 255.
+DATA: g_alv_list_refresh      TYPE slis_selfield-refresh.
+
+DATA: p_fotrn TYPE tdobname  VALUE 'ZME12_FOOTER_',
+      p_fotro TYPE tdobject  VALUE 'TEXT',
+      p_fotri TYPE tdid      VALUE 'ADRS',
+      p_fotrl TYPE tdspras   VALUE 'DE',
+      p_prtna TYPE rspopname VALUE 'LOCL',
+      p_formn TYPE tdsfname  VALUE 'ZME12FORM'.
+DATA: gt_mail_body       TYPE bcsy_text,
+      gs_job_output_info TYPE ssfcrescl.
+
+*Add text position ZME12
+*----------------------------------------------------------------------*
+* CONSTANTS
+*----------------------------------------------------------------------*
+CONSTANTS: c_bstyp_l(1) VALUE 'L',
+*Constants for text search function
+           c_obj_pos    LIKE thead-tdobject VALUE 'EKPO', "Position Texts
+           c_id_ob      LIKE thead-tdid VALUE 'L01',
+           c_id_em      LIKE thead-tdid VALUE 'L04',
+*Texts for closed purchase order
+           c_id_ob_pc   LIKE thead-tdid VALUE 'F01',
+           c_id_ob_px   LIKE thead-tdid VALUE 'F02'.
+*End Mod Javi Arce.Mar10.SDR459
+DATA t_zmt001w  LIKE  zmt001w OCCURS 0 WITH HEADER LINE.
+DATA: d_adrnr LIKE ekko-adrnr,
+      d_bstyp LIKE ekko-bstyp,
+      d_spras LIKE ekko-spras,
+      d_shkzg LIKE ekbe-shkzg,
+      d_menge LIKE ekbe-menge,
+      d_wrbtr LIKE ekbe-wrbtr,
+      d_dmbtr LIKE ekbe-dmbtr,
+      d_gjahr LIKE ekbe-gjahr,
+      d_buzei LIKE ekbe-buzei,
+      d_bukrs LIKE t001-bukrs,
+      d_land1 LIKE t001-land1.
+*-----------------------------------------------------------------------
+* Selection screen
+*-----------------------------------------------------------------------
+* General data.
+SELECTION-SCREEN: BEGIN OF BLOCK marco1 WITH FRAME TITLE TEXT-025.
+
+"PARAMETERS sociedad MEMORY ID buk LIKE ekko-bukrs OBLIGATORY.
+SELECT-OPTIONS: sociedad FOR ekko-bukrs OBLIGATORY MEMORY ID buk.
+SELECT-OPTIONS: werks FOR marc-werks OBLIGATORY MEMORY ID wrk.
+SELECT-OPTIONS provee FOR ekko-lifnr.
+SELECT-OPTIONS: reswk FOR ekko-reswk.
+SELECT-OPTIONS xblnr FOR ekbe-xblnr.
+SELECTION-SCREEN: END OF BLOCK marco1.
+
+SELECTION-SCREEN: BEGIN OF BLOCK marco2 WITH  FRAME.
+SELECT-OPTIONS matnr FOR ekpo-matnr.
+SELECT-OPTIONS budat FOR ekbe-budat.
+SELECT-OPTIONS tipo FOR ekko-bstyp.
+SELECTION-SCREEN: END OF BLOCK marco2.
+
+SELECTION-SCREEN: BEGIN OF BLOCK marco3 WITH  FRAME.
+PARAMETERS: entrada AS CHECKBOX DEFAULT 'X'.
+PARAMETERS: devolu AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN: END OF BLOCK marco3.
+
+SELECTION-SCREEN BEGIN OF BLOCK marco4 WITH FRAME.
+PARAMETERS: p_alv   RADIOBUTTON GROUP a20.              " ALV
+PARAMETERS: p_print RADIOBUTTON GROUP a20.              " Imprimir
+PARAMETERS: p_email RADIOBUTTON GROUP a20 MODIF ID eml. " Mail
+SELECTION-SCREEN: END OF BLOCK marco4.
+
+******
+INITIALIZATION.
+  tipo-low = 'F'.
+  tipo-high = 'L'.
+  tipo-sign = 'I'.
+  tipo-option = 'BT'.
+  APPEND tipo.
+
+*Add text position ZME12
+  PERFORM f_get_fieldcat.
+*-----------------------------------------------------------------------
+START-OF-SELECTION.
+*-----------------------------------------------------------------------
+
+  DATA: d_lifnr LIKE lfa1-lifnr.
+*  Read data
+  SELECT * FROM zmt001w INTO CORRESPONDING FIELDS OF TABLE t_zmt001w.
+
+  SELECT ko~waers ko~lifnr ko~reswk ko~adrnr ko~ebeln
+         ko~bstyp ko~spras ko~bukrs
+         po~werks po~matnr po~meins po~ebelp po~txz01
+         be~belnr be~budat be~bldat be~xblnr be~lfbnr
+         be~cpudt be~cputm be~bwart
+         be~shkzg be~menge be~wrbtr be~dmbtr be~gjahr be~buzei
+    INTO (tab-waers, tab-lifnr, tab-reswk, d_adrnr, tab-ebeln,
+          d_bstyp, d_spras, d_bukrs,
+          tab-werks, tab-matnr, tab-meins, tab-ebelp, tab-txz01,
+          tab-belnr, tab-budat, tab-bldat, tab-xblnr, tab-lfbnr,
+          tab-cpudt, tab-cputm, tab-bwart,
+          d_shkzg, d_menge, d_wrbtr, d_dmbtr, d_gjahr, d_buzei)
+    FROM ekko AS ko
+    INNER JOIN ekpo AS po
+    ON ko~ebeln = po~ebeln
+    INNER JOIN ekbe AS be
+      ON  po~ebeln = be~ebeln
+      AND   po~ebelp = be~ebelp
+    WHERE   ko~bukrs IN sociedad
+      AND   ko~lifnr IN provee
+      AND   ko~reswk IN reswk
+      AND   ko~bstyp IN tipo
+      AND   po~werks IN werks
+      AND   po~matnr IN matnr
+      AND   be~budat IN budat
+      AND   be~bwart <> space
+      AND   be~xblnr IN xblnr.
+
+    IF tab-lifnr <> space.
+      SELECT SINGLE * FROM lfa1 WHERE lifnr = tab-lifnr.
+      d_lifnr = lfa1-lifnr.
+    ELSE.
+      SELECT SINGLE * FROM t001w WHERE werks = tab-reswk.
+      lfa1-adrnr = t001w-adrnr.
+      tab-lifnr = tab-reswk.
+      SELECT SINGLE zlifnr INTO d_lifnr
+        FROM zt001w
+        WHERE werks = tab-reswk.
+    ENDIF.
+
+    CLEAR: tab-dispo, tab-dsnam.
+    SELECT SINGLE dispo FROM marc INTO tab-dispo
+        WHERE werks = tab-werks
+          AND matnr = tab-matnr.
+    SELECT SINGLE dsnam FROM t024d INTO tab-dsnam
+        WHERE werks = tab-werks
+          AND dispo = tab-dispo.
+
+*ADDRESS
+    IF d_adrnr = space.
+      d_adrnr = lfa1-adrnr.
+    ENDIF.
+    selection-addrnumber = d_adrnr.
+    CLEAR result.
+
+    CALL FUNCTION 'ADDR_GET'
+      EXPORTING
+        address_selection = selection
+      IMPORTING
+        address_value     = result
+      EXCEPTIONS
+        parameter_error   = 1.
+
+    tab-name1 = result-name1.
+
+    SELECT SINGLE land1 INTO d_land1
+      FROM t001
+      WHERE bukrs = d_bukrs.
+
+    IF tab-bwart(1) = '1'.
+      IF d_shkzg = 'H'.
+        tab-menge = d_menge * -1.
+        tab-wrbtr = d_wrbtr * -1.
+        tab-dmbtr = d_dmbtr * -1.
+      ELSE.
+        tab-menge = d_menge.
+        tab-wrbtr = d_wrbtr.
+        tab-dmbtr = d_dmbtr.
+      ENDIF.
+      READ TABLE t_zmt001w WITH KEY werks = tab-werks.
+      tab-waersl = t_zmt001w-waers.
+*ENTRY PRICE
+* - CX_SY_ZERODIVIDE #
+      TRY.
+          tab-netpr = d_wrbtr / d_menge.
+        CATCH cx_sy_zerodivide.
+          tab-netpr = 0.
+      ENDTRY.
+*  CX_SY_ZERODIVIDE #
+*STORED PRICE
+      PERFORM precio.
+      CLEAR tab-bktxt.
+      DATA: d_xblnr LIKE mkpf-xblnr.
+      CLEAR d_xblnr.
+*      SELECT SINGLE lgort bktxt xblnr
+*        INTO (tab-lgort, tab-bktxt, d_xblnr)
+*      FROM zv_mkpf_mseg
+*      WHERE mblnr = tab-belnr
+*      AND mjahr = d_gjahr
+*      AND zeile = d_buzei.
+
+  SELECT SINGLE mseg~lgort
+              mkpf~bktxt
+              mkpf~xblnr
+  INTO (tab-lgort,
+        tab-bktxt,
+        d_xblnr)
+  FROM mkpf
+  INNER JOIN mseg
+    ON mkpf~mblnr = mseg~mblnr
+   AND mkpf~mjahr = mseg~mjahr
+ WHERE mseg~mblnr = tab-belnr.
+
+
+
+      tab-xblnr2 = tab-xblnr.
+      IF tab-bwart = 102.
+        "For reversals
+        SELECT SINGLE lifex INTO tab-xblnr2
+          FROM likp
+          WHERE vbeln = tab-xblnr
+            AND lifnr = d_lifnr."tab-lifnr.
+      ENDIF.
+      CLEAR tab-lichn.
+* Start of modification 27/05/2022 - DGANEDV01 INC0531839 - Transaction is assigning De
+      CLEAR: tab-vbeln, tab-posnr.
+* End of modification 27/05/2022 - DGANEDV01 INC0531839 - Transaction is assigning De
+      "Search by delivery and material...
+      "If there are multiple delivery items with the same material,
+      "Only one value will be returned
+      SELECT SINGLE lp~lichn lp~vbeln lp~posnr
+        INTO (tab-lichn, tab-vbeln, tab-posnr)
+        FROM lips AS lp
+        INNER JOIN likp AS lk
+        ON lk~vbeln = lp~vbeln
+        WHERE lk~vbeln = d_xblnr
+          AND lk~lifnr = d_lifnr "tab-lifnr
+          AND lp~werks = tab-werks
+          AND lp~matnr = tab-matnr.
+
+      CLEAR tab-totalamount.
+
+      IF d_land1 = 'IN'.
+        SELECT SINGLE exnum docno status exdat
+          INTO (tab-exnum, tab-docno, tab-status, tab-exdat)
+
+          FROM j_1iexchdr WHERE rdoc = tab-belnr
+                            AND ryear = d_gjahr.
+        SELECT SINGLE excur exbas exbed
+                      exsed exaed cess indtax
+                      ecs exaddtax1
+        INTO (tab-excur, tab-exbas, tab-exbed,
+              tab-exsed, tab-exaed, tab-cess, tab-indtax,
+              tab-ecs, tab-exaddtax1)
+        FROM j_1iexcdtl
+          WHERE rdoc2 = tab-belnr
+            AND ryear2 = d_gjahr
+            AND ritem2 = d_buzei.
+        IF sy-subrc = 0.
+          tab-totalamount = tab-exbas + tab-exbed +
+                            tab-exsed + tab-exaed + tab-cess +
+                            tab-indtax + tab-ecs + tab-exaddtax1.
+
+        ENDIF.
+      ENDIF.
+
+
+      READ TABLE i_fact
+      WITH KEY ebeln = tab-ebeln
+               ebelp = tab-ebelp.
+      IF sy-subrc <> 0.
+        i_fact-ebeln = tab-ebeln.
+        i_fact-ebelp = tab-ebelp.
+        IF d_bstyp = c_bstyp_l OR d_bstyp = 'A'.
+          PERFORM textos_posicion USING c_id_ob.
+        ELSE.                            "Closed purchase order
+          PERFORM textos_posicion USING c_id_ob_pc.
+          IF sy-subrc <> 0.
+            PERFORM textos_posicion USING c_id_ob_px.
+          ENDIF.
+        ENDIF.
+        APPEND i_fact.
+      ENDIF.
+      tab-textp = i_fact-textp.
+      READ TABLE t_zmt001w WITH KEY werks = tab-werks.
+
+      CASE tab-bwart.
+        WHEN '101' OR '102' OR '103' OR '104' OR '105' OR '106'.
+          IF entrada = 'X'.
+            APPEND tab.
+          ENDIF.
+
+        WHEN '122' OR '123' OR '124' OR '161' OR '162' OR '125'.
+          IF devolu = 'X'.
+            APPEND tab.
+          ENDIF.
+
+      ENDCASE.
+    ENDIF.
+
+  ENDSELECT.
+*Add SS2 data
+  SELECT * FROM zekbe
+      WHERE   lifnr IN provee
+*      AND   bstyp IN tipo
+        AND   werks IN werks
+        AND   matnr IN matnr
+        AND   budat IN budat
+        AND   vgabe = '1'
+        AND   xblnr IN xblnr.
+    MOVE-CORRESPONDING zekbe TO tab.
+*Material conversion
+
+    SELECT SINGLE * FROM mara  WHERE  matnr = tab-matnr.
+    IF sy-subrc <> 0.
+      SELECT SINGLE * FROM mara WHERE bismt = tab-matnr.
+      IF sy-subrc = 0.
+        tab-matnr = mara-matnr.
+      ELSE.
+        CONCATENATE 'E' tab-matnr INTO tab-matnr.
+      ENDIF.
+    ENDIF.
+*************
+    tab-meins = zekbe-meins.
+*Material.
+
+    IF tab-lifnr <> space.
+      SELECT SINGLE * FROM lfa1 WHERE lifnr = tab-lifnr.
+      d_lifnr = lfa1-lifnr.
+    ELSE.
+      SELECT SINGLE * FROM t001w WHERE werks = tab-reswk.
+      lfa1-adrnr = t001w-adrnr.
+      tab-lifnr = tab-reswk.
+      SELECT SINGLE zlifnr INTO d_lifnr
+        FROM zt001w
+        WHERE werks = tab-reswk.
+    ENDIF.
+*ADDRESS
+    IF d_adrnr = space.
+      d_adrnr = lfa1-adrnr.
+    ENDIF.
+    selection-addrnumber = d_adrnr.
+    CLEAR result.
+
+    CALL FUNCTION 'ADDR_GET'
+      EXPORTING
+        address_selection = selection
+      IMPORTING
+        address_value     = result
+      EXCEPTIONS
+        parameter_error   = 1.
+
+    tab-name1 = result-name1.
+
+    SELECT SINGLE land1 INTO d_land1
+      FROM t001
+      WHERE bukrs = d_bukrs.
+
+    IF tab-bwart(1) = '1' OR tab-bwart = ' '.
+      IF d_shkzg = 'H'.
+        tab-menge = zekbe-menge * -1.
+        tab-wrbtr = zekbe-wrbtr * -1.
+        tab-dmbtr = zekbe-dmbtr * -1.
+      ELSE.
+        tab-menge = zekbe-menge.
+        tab-wrbtr = zekbe-wrbtr.
+        tab-dmbtr = zekbe-dmbtr.
+      ENDIF.
+
+*ENTRY PRICE
+
+      TRY.
+          tab-netpr = zekbe-wrbtr / zekbe-menge.
+        CATCH cx_sy_zerodivide.
+          tab-netpr = 0.
+      ENDTRY.
+
+      SELECT SINGLE * FROM lfa1 WHERE lifnr = tab-lifnr.
+      IF sy-subrc = 0.
+        tab-name1 = lfa1-name1.
+      ELSE.
+        tab-name1 = '------------------'.
+      ENDIF.
+      tab-bldat = tab-budat.
+      SELECT SINGLE * FROM makt WHERE matnr = tab-matnr AND spras = sy-langu.
+      IF sy-subrc = 0.
+        tab-txz01 = makt-maktx.
+      ELSE.
+        tab-txz01 = '------------------'.
+      ENDIF.
+      READ TABLE t_zmt001w WITH KEY werks = tab-werks.
+      tab-waersl = t_zmt001w-waers.
+      PERFORM preciohq.
+      CASE tab-bwart.
+        WHEN '101' OR '102' OR '103' OR '104' OR '105' OR '106' OR '   '.
+          IF entrada = 'X'.
+            APPEND tab.
+          ENDIF.
+
+        WHEN '122' OR '123' OR '124' OR '161' OR '162' OR '125'.
+          IF devolu = 'X'.
+            APPEND tab.
+          ENDIF.
+
+      ENDCASE.
+    ENDIF.
+
+  ENDSELECT.
+
+
+*-----------------------------------------------------------------------
+end-of-selection.
+*-----------------------------------------------------------------------
+  PERFORM completar.
+  IF p_alv = 'X'.
+    PERFORM foralv.
+  ENDIF.
+  IF p_print = 'X'.
+    LOOP AT tab.
+      tab-xselp = 'X'.
+      MODIFY tab.
+    ENDLOOP.
+    PERFORM p_print.
+  ENDIF.
+
+  IF p_email = 'X'.
+    LOOP AT tab.
+      tab-xselp = 'X'.
+      MODIFY tab.
+    ENDLOOP.
+    PERFORM mail.
+  ENDIF.
+*&---------------------------------------------------------------------*
+*&      Form  foralv
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM foralv.
+
+  is_u_layout-box_fieldname     = 'XSELP'.
+  is_u_layout-zebra             = 'X'.
+  is_u_layout-group_change_edit = 'X'.
+
+
+  is_u_layout-box_tabname = 'TAB'.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program       = 'ZMM101P'
+*      i_callback_pf_status_set = 'STATUS'
+      i_callback_user_command  = 'DETALLES'
+*     i_structure_name         = 'ZMM101P'
+      i_grid_title             = sy-title
+      i_grid_settings          = s_grid_settings
+      is_layout                = is_u_layout
+      it_fieldcat              = ct_fieldcat
+      i_default                = 'X'
+      i_save                   = 'A'
+      is_variant               = l_variant
+    TABLES
+      t_outtab                 = tab.
+
+
+ENDFORM.                    " foralv
+*&---------------------------------------------------------------------*
+*&      Form  CAMPO_ST
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_SELECC_CAMPO  text
+*      -->P_SELECC_TABLA  text
+*----------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+*       FORM STATUS                                                   *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  FTIP_EXCL                                                     *
+*---------------------------------------------------------------------*
+FORM status USING ftip_excl TYPE kkblo_t_extab .
+  SET PF-STATUS 'STANDARD_FULLSCREEN'.
+ENDFORM.                    "STATUS
+
+*---------------------------------------------------------------------*
+*details
+*---------------------------------------------------------------------*
+
+FORM details USING r_ucomm LIKE sy-ucomm
+                    rs_selfield TYPE slis_selfield.
+
+  RANGES: fec FOR sy-datum.
+  DATA: inicio  TYPE d,
+        fin     TYPE d,
+        year(4) TYPE n,
+        mes(3)  TYPE n.
+
+
+*  loop at tab where xselp = 'X'.
+*  READ TABLE TAB INDEX RS_SELFIELD-TABINDEX.
+*  IF SY-SUBRC = 0.
+
+  CASE r_ucomm.
+* --------- Generate PE delivery order ------------*
+
+    WHEN 'HISTO'.
+
+***********
+      LOOP AT tab WHERE xselp = 'X'.
+        SUBMIT rm06ehbe AND RETURN
+                 WITH s_ebeln = tab-ebeln
+                 WITH s_ebelp = tab-ebelp
+                 WITH lesen    = 'Y'.
+      ENDLOOP.
+    WHEN 'PRINT'.
+      LOOP AT tab WHERE xselp = 'X'.
+        PERFORM p_print.
+      ENDLOOP.
+    WHEN 'SEND'.
+      PERFORM mail.
+    WHEN OTHERS.
+  ENDCASE.
+*  ENDIF.
+*  endloop.
+
+ENDFORM.                    "DETALLES
+*&---------------------------------------------------------------------*
+*&      Form  PRECIO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM precio.
+  DATA: w_ekpo LIKE ekpo.
+  tab-precio = 0.
+  SELECT SINGLE * FROM a016 WHERE kappl = 'M'
+                      AND  kschl = 'PB00'
+                      AND  evrtn =  tab-ebeln
+                      AND  evrtp =  tab-ebelp
+                      AND  datab <= tab-budat
+                      AND datbi  >= tab-budat.
+
+  IF sy-subrc = 0.
+    SELECT * FROM konp WHERE knumh = a016-knumh
+                  AND kappl = 'M'
+                  AND  kschl = 'PB00'
+                  AND loevm_ko = space. "Deletion indicator
+    ENDSELECT.
+
+    tab-precio = ( konp-kbetr / konp-kpein ).
+  ENDIF.
+  IF tab-precio IS INITIAL.
+    SELECT SINGLE * FROM ekpo INTO w_ekpo
+      WHERE ebeln = tab-ebeln
+        AND ebelp = tab-ebelp.
+    IF w_ekpo-bstyp = 'F'.
+      tab-precio = w_ekpo-netpr / w_ekpo-peinh.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    "precio
+*&---------------------------------------------------------------------*
+*&      Form  preciohq
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM preciohq.
+  DATA: dif TYPE p DECIMALS 2.
+  DATA: difa TYPE p DECIMALS 2.
+
+  tab-precio = 0.
+  SELECT SINGLE * FROM a016 WHERE kappl = 'M'
+                      AND  kschl = 'PB00'
+                      AND  evrtn =  tab-ebeln_hq
+                      AND  evrtp =  tab-ebelp_hq
+                      AND  datab <= tab-budat
+                      AND datbi  >= tab-budat.
+
+  IF sy-subrc = 0.
+    SELECT * FROM konp WHERE knumh = a016-knumh
+                  AND kappl = 'M'
+                  AND  kschl = 'PB00'
+                  AND loevm_ko = space. "Deletion indicator
+    ENDSELECT.
+
+    tab-precio = ( konp-kbetr / konp-kpein ).
+
+  ENDIF.
+
+*Perform currency conversion
+  dif = tab-netpr - tab-precio .
+  IF dif < 0.
+    dif = dif * -1.
+  ENDIF.
+
+  difa = 10  / 100.
+
+  tab-imported = tab-menge * ( tab-netpr - tab-precio ).
+
+  IF dif > difa.
+*RED
+    tab-icon = '@0A@'.
+
+  ELSE.
+    IF dif = 0.
+*VERDE.
+      tab-icon = '@08@'.
+      tab-imported = 0.
+    ELSE.
+*YELLOW
+      tab-icon = '@09@'.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    " PRECIO
+
+FORM textos_posicion USING p_id LIKE thead-tdid.
+  REFRESH i_lines.
+  CLEAR i_lines.
+  CLEAR i_fact-textp.
+  CONCATENATE tab-ebeln tab-ebelp INTO d_name.
+  CALL FUNCTION 'READ_TEXT'
+    EXPORTING
+*     CLIENT   = SY-MANDT
+      id       = p_id
+      language = d_spras
+      name     = d_name
+      object   = c_obj_pos
+*     ARCHIVE_HANDLE          = 0
+    IMPORTING
+      header   = r_header
+    TABLES
+      lines    = i_lines
+                 EXCEPTIONS
+                 id
+                 language
+                 name
+                 not_found
+                 object
+                 reference_check
+                 wrong_access_to_archive.
+  IF sy-subrc = 0.
+    CLEAR tab-textp.
+    LOOP AT i_lines.
+      CONCATENATE i_fact-textp i_lines-tdline INTO i_fact-textp SEPARATED BY space.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.                               " TEXTOS_POSICION
+
+*&---------------------------------------------------------------------*
+*&      Form  f_get_fieldcat
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM f_get_fieldcat.
+  DATA : d_fieldcat TYPE slis_fieldcat_alv.
+
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name   = 'ZMM101P'
+      i_bypassing_buffer = 'X'
+    CHANGING
+      ct_fieldcat        = ct_fieldcat.
+
+  READ TABLE ct_fieldcat INTO d_fieldcat WITH KEY fieldname = 'TEXTP'.
+  IF sy-subrc = 0.
+    d_fieldcat-seltext_l = TEXT-t1l.
+    d_fieldcat-seltext_m = TEXT-t1m.
+    d_fieldcat-seltext_s = TEXT-t1s.
+    MODIFY ct_fieldcat FROM d_fieldcat INDEX sy-tabix.
+  ENDIF.
+***04.08.2014 PS303001
+  READ TABLE ct_fieldcat INTO d_fieldcat WITH KEY fieldname = 'MEINS'.
+  IF sy-subrc = 0.
+    d_fieldcat-seltext_l = TEXT-t2l.
+    d_fieldcat-seltext_m = TEXT-t2m.
+    d_fieldcat-seltext_s = TEXT-t2s.
+    MODIFY ct_fieldcat FROM d_fieldcat INDEX sy-tabix.
+  ENDIF.
+***04.08.2014 PS303001
+ENDFORM.                    "f_get_fieldcat
+*End Mod Javi Arce.Mar10.
+*&---------------------------------------------------------------------*
+*&      Form  COMPLETAR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM completar .
+
+ENDFORM.                    " COMPLETAR
+*&---------------------------------------------------------------------*
+*&      Form  PRINT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM print USING pv_getpdf
+                 pv_lifnr.
+
+  DATA: lv_fm_name              TYPE rs38l_fnam,
+        ls_control_parameters   TYPE ssfctrlop,
+        ls_output_options       TYPE ssfcompop,
+        lt_error_tab            TYPE tsferror,
+        "LS_TCATALOG             TYPE TCATALOG,
+        ls_document_output_info	TYPE ssfcrespd,
+        ls_job_output_options   TYPE ssfcresop,
+        lv_rspoptype            TYPE rspoptype,
+*        LT_OUTTAB1              LIKE GT_OUTTAB1,
+*        LS_OUTTAB1              LIKE LINE OF LT_OUTTAB1,
+*        LS_WERKS_LIFNR          LIKE LINE OF  GT_WERKS_LIFNR,
+*        LS_GLBE_HD              LIKE LINE OF  PT_GLBE_HD,
+*        gs_job_output_info      TYPE ssfcrescl,
+        bezei                   TYPE i,
+        w_lfa1                  LIKE lfa1.
+
+
+  CONCATENATE p_fotrn werks-low INTO p_fotrn.
+
+
+*  LS_OUTPUT_SSFO_HD-TDOBJECT  = P_FOTRO.
+*  LS_OUTPUT_SSFO_HD-TDNAME    = P_FOTRN.
+*  LS_OUTPUT_SSFO_HD-TDID      = P_FOTRI.
+*  LS_OUTPUT_SSFO_HD-TDSPRAS   = P_FOTRL.
+*  "LS_OUTPUT_SSFO_HD-LOGO1     = P_LOGO.
+*  LS_OUTPUT_SSFO_HD-BUDAT1    = sy-datlo.
+*  LS_OUTPUT_SSFO_HD-BUDAT2    = sy-datlo.
+
+  IF pv_getpdf EQ 'X'.
+    CALL FUNCTION 'SSF_GET_DEVICE_TYPE'
+      EXPORTING
+        i_language    = sy-langu
+        i_application = 'SAPDEFAULT'
+      IMPORTING
+        e_devtype     = lv_rspoptype.
+
+    ls_output_options-tdprinter     = lv_rspoptype.
+    ls_control_parameters-no_dialog = 'X'.
+    ls_control_parameters-getotf    = 'X'.
+  ELSE.
+    ls_control_parameters-no_dialog = sy-batch.
+    ls_output_options-tddest        = p_prtna.
+    ls_output_options-tdimmed       = 'X'.
+
+  ENDIF.
+
+
+
+  lv_fm_name = space.
+
+  CALL FUNCTION 'SSF_FUNCTION_MODULE_NAME'
+    EXPORTING
+      formname           = p_formn
+    IMPORTING
+      fm_name            = lv_fm_name
+    EXCEPTIONS
+      no_form            = 1
+      no_function_module = 2
+      OTHERS             = 3.
+
+
+
+
+  IF sy-subrc EQ 0 AND lv_fm_name NE space.
+    CLEAR bezei.
+    REFRESH lt_output_ssfo.
+    LOOP AT tab3 WHERE lifnr = pv_lifnr.
+      ADD 1 TO bezei.
+      ls_output_ssfo-bezei = bezei.
+      ls_output_ssfo-lifex = tab3-xblnr.
+      ls_output_ssfo-budat = tab3-budat.
+      ls_output_ssfo-bldat = tab3-bldat.
+      ls_output_ssfo-matnr = tab3-matnr.
+      ls_output_ssfo-sgtxt = tab3-txz01.
+      ls_output_ssfo-menge = tab3-menge.
+      ls_output_ssfo-meins = tab3-meins.
+      ls_output_ssfo-charg = tab3-lichn.
+      ls_output_ssfo-belnr = tab3-belnr.
+*      ls_output_ssfo_hd-test = gv_test_run.
+*      ls_output_ssfo_hd-ohne_ort_erhalt = p_fpara1.
+
+      APPEND ls_output_ssfo TO lt_output_ssfo.
+
+    ENDLOOP.
+    ls_output_ssfo_hd-werks = tab3-werks.
+    ls_output_ssfo_hd-erdat = sy-datlo."tab2-budat.
+    ls_output_ssfo_hd-tdid = p_fotri.
+    ls_output_ssfo_hd-tdspras = p_fotrl.
+    ls_output_ssfo_hd-tdname = p_fotrn.
+    ls_output_ssfo_hd-tdobject = p_fotro.
+    ls_output_ssfo_hd-ohne_ort_erhalt = 'X'.
+    ls_output_ssfo_hd-budat1 = budat-low.
+    ls_output_ssfo_hd-budat2 = budat-high.
+    ls_output_ssfo_hd-parnr = tab3-lifnr.
+
+    CHECK lt_output_ssfo[] IS NOT INITIAL.
+
+    CLEAR: gs_job_output_info, ls_document_output_info, ls_job_output_options.
+*
+    CLEAR w_lfa1.
+    SELECT SINGLE * FROM lfa1 INTO w_lfa1 WHERE lifnr = tab3-lifnr.
+    IF sy-subrc EQ 0 AND w_lfa1-spras IS NOT INITIAL.
+      ls_control_parameters-langu = w_lfa1-spras.
+      SET LANGUAGE w_lfa1-spras.
+    ENDIF.
+
+    CALL FUNCTION lv_fm_name
+      EXPORTING
+        control_parameters   = ls_control_parameters
+        output_options       = ls_output_options
+        user_settings        = space
+        is_header1           = ls_output_ssfo_hd
+      IMPORTING
+        document_output_info = ls_document_output_info
+        job_output_info      = gs_job_output_info
+        job_output_options   = ls_job_output_options
+      TABLES
+        it_item1             = lt_output_ssfo
+      EXCEPTIONS
+        formatting_error     = 1
+        internal_error       = 2
+        send_error           = 3
+        user_canceled        = 4
+        OTHERS               = 5.
+    IF sy-subrc <> 0.
+*       Smart Forms: Lesen der Fehlertabelle nach Aufruf
+      CALL FUNCTION 'SSF_READ_ERRORS'
+        IMPORTING
+          errortab = lt_error_tab.
+
+    ENDIF.
+*    ENDLOOP.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  MAIL
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM mail.
+  TYPE-POOLS: truxs.
+
+  DATA:
+    lv_bin_file         TYPE xstring,
+    lt_lines            TYPE TABLE OF tline,
+    lv_bin_filesize     TYPE i,
+*        LT_OUTTAB1            LIKE GT_OUTTAB1,
+*        LS_OUTTAB1            LIKE LINE OF LT_OUTTAB1,
+    "LS_WERKS_LIFNR        LIKE LINE OF GT_WERKS_LIFNR,
+*        LS_GLBE_HD            LIKE LINE OF GT_GLBE_HD,
+    lv_subject          TYPE so_obj_des,  " Subject / Betreff
+    lv_objdes_pdf       TYPE sood-objdes, " PDF Filename
+    lv_objdes_txt       TYPE sood-objdes, " TXT Filename
+*        LT_OUTPUT_TXT         TYPE TABLE OF TT_OUTPUT_TXT,
+*        LS_OUTPUT_TXT         LIKE LINE OF LT_OUTPUT_TXT,
+    lt_outtab_txt_sting TYPE truxs_t_text_data,
+    ls_outtab_txt_sting LIKE LINE OF lt_outtab_txt_sting,
+    lt_att_content_text TYPE soli_tab,
+    ls_att_content_text LIKE LINE OF lt_att_content_text,
+    lv_subject_periode  TYPE char10,
+    lv_subject_partner  TYPE char10,
+    gv_sep              VALUE cl_abap_char_utilities=>horizontal_tab,
+    bezei               TYPE i,
+    lv_adrnr            LIKE ekko-adrnr,
+    t_addr              TYPE szadr_addr1_complete,
+    t_adsmtp_tab        TYPE szadr_adsmtp_line,
+    lv_persnumber       LIKE usr21-persnumber,
+    lv_addrnumber       LIKE usr21-addrnumber,
+    lv_rec1             LIKE adr6-smtp_addr,
+    lv_rec2             LIKE adr6-smtp_addr.
+
+*        LV_REC1               LIKE GV_SEL_SMTPA,
+*        LV_REC2               LIKE GV_SEL_SMTPA,
+*        LT_GLBE_HD            LIKE GT_GLBE_HD,
+*        LV_DOCNUM     TYPE TT_OUTPUT_SSFO_HD-DOCNUM.
+
+  DATA: lv_text       TYPE string,
+        lv_date       TYPE string,
+        lv_budat_low  TYPE string,
+        lv_budat_high TYPE string
+        .
+
+  REFRESH: tab2,tab3.
+  CLEAR: tab2,tab3.
+  LOOP AT tab WHERE xselp = 'X'.
+    tab2 = tab.
+    APPEND tab2.
+    tab3 = tab.
+    APPEND tab3.
+
+  ENDLOOP.
+
+* INI - ECOIS23 14/09/2023
+  SORT tab2 BY lifnr ASCENDING ebeln ASCENDING.
+  DELETE ADJACENT DUPLICATES FROM tab2 COMPARING lifnr.
+*  DELETE ADJACENT DUPLICATES FROM tab2 COMPARING ebeln.
+
+* Table for sending attachments sorted by date
+  SORT tab3 BY lifnr ASCENDING budat ASCENDING.
+
+  CLEAR: lv_budat_low,lv_budat_high,lv_date,lv_text.
+  REFRESH gt_mail_body.
+  CONCATENATE budat-low+6(2) budat-low+4(2) budat-low(4) INTO lv_budat_low SEPARATED BY '.'.
+  CONCATENATE budat-high+6(2) budat-high+4(2) budat-high(4) INTO lv_budat_high SEPARATED BY '.'.
+
+  CONCATENATE 'Please find attached Goods receipt detail from' lv_budat_low 'to' lv_budat_high INTO lv_date SEPARATED BY space.
+
+  CONCATENATE 'Dear Vendor,' cl_abap_char_utilities=>newline
+              lv_date cl_abap_char_utilities=>newline
+              'Request you to verify the receipts with your sales data & confirm all are in line as per records.'
+              cl_abap_char_utilities=>newline
+              'If you found missing Invoices, incorrect prices etc. please report us within 3 days on receipt of this communication.'
+              'Delayed response will not be accepted beyond 3 days.'
+              cl_abap_char_utilities=>newline
+              'Thank you' INTO lv_text SEPARATED BY cl_abap_char_utilities=>newline.
+
+* Assign the line to the table to be sent
+  CALL FUNCTION 'SCMS_STRING_TO_FTEXT'
+    EXPORTING
+      text      = lv_text
+    TABLES
+      ftext_tab = gt_mail_body.
+* FIN - ECOIS23-473 14/09/2023
+
+  DATA l_index TYPE sy-tabix.
+  DATA send_request  TYPE REF TO cl_bcs.
+  DATA document      TYPE REF TO cl_document_bcs.
+  DATA recipient     TYPE REF TO if_recipient_bcs.
+  DATA lv_length     TYPE i.
+  DATA lv_werks3     TYPE char3.
+
+  LOOP AT tab2.
+
+    CLEAR lv_length.
+
+    l_index = sy-tabix.
+
+    lv_length = strlen( tab2-werks ).
+    IF lv_length EQ '3'.
+      MOVE tab2-werks TO lv_werks3.
+      CONCATENATE 'Goods Receipt–SPR AUTO INTERIOR' space lv_werks3 '–' lv_budat_low space 'to' space lv_budat_high INTO lv_subject RESPECTING BLANKS.
+    ELSE.
+      CONCATENATE 'Goods Receipt–SPR AUTO INTERIOR' space tab2-werks '–' lv_budat_low space 'to' space lv_budat_high INTO lv_subject RESPECTING BLANKS.
+    ENDIF.
+
+    "CONCATENATE 'Goods Receipt–Antolin' space tab2-werks '–' lv_budat_low space 'to' space lv_budat_high INTO lv_subject RESPECTING BLANKS.
+
+*    PERFORM print USING 'X' tab2-ebeln.
+    PERFORM print USING 'X' tab2-lifnr.
+
+    CALL FUNCTION 'CONVERT_OTF'
+      EXPORTING
+        format       = 'PDF'
+      IMPORTING
+        bin_filesize = lv_bin_filesize
+        bin_file     = lv_bin_file
+      TABLES
+        otf          = gs_job_output_info-otfdata
+        lines        = lt_lines
+      EXCEPTIONS
+        OTHERS       = 1.
+
+    CLEAR lv_adrnr.
+
+    SELECT SINGLE adrnr FROM ekko INTO lv_adrnr WHERE ebeln = tab2-ebeln.
+
+    IF lv_adrnr IS INITIAL.
+      SELECT SINGLE adrnr FROM lfa1 INTO lv_adrnr WHERE lifnr = tab2-lifnr.
+    ENDIF.
+
+    CLEAR t_addr.
+
+    CALL FUNCTION 'ADDR_GET_COMPLETE'
+      EXPORTING
+        addrnumber              = lv_adrnr
+*       ADDRHANDLE              =
+*       ARCHIVE_HANDLE          =
+*       IV_CURRENT_COMM_DATA    = 'X'
+*       BLK_EXCPT               =
+      IMPORTING
+        addr1_complete          = t_addr
+      EXCEPTIONS
+        parameter_error         = 1
+        address_not_exist       = 2
+        internal_error          = 3
+        wrong_access_to_archive = 4
+        address_blocked         = 5
+        OTHERS                  = 6.
+
+    CLEAR lv_rec1.
+    READ TABLE t_addr-adsmtp_tab INTO t_adsmtp_tab WITH KEY adsmtp-flgdefault = 'X'.
+    IF sy-subrc = 0.
+      lv_rec1 = t_adsmtp_tab-adsmtp-smtp_addr.
+    ENDIF.
+
+* Now get the email of the user executing it
+    CLEAR: lv_persnumber, lv_addrnumber.
+
+    SELECT SINGLE persnumber addrnumber FROM usr21 INTO (lv_persnumber, lv_addrnumber)
+      WHERE bname = sy-uname.
+
+    SELECT SINGLE smtp_addr FROM adr6 INTO lv_rec2
+      WHERE addrnumber = lv_addrnumber
+        AND persnumber = lv_persnumber.
+
+    PERFORM output_email_create TABLES lt_att_content_text " Text Attachment
+                                 USING lv_bin_file         " PDF Attachment
+                                       lv_bin_filesize     " PDF File Size
+                                       lv_subject          " Mail Subject
+                                       lv_objdes_pdf       " PDF Filename
+                                       lv_objdes_txt       " TXT Filename
+                                       lv_rec1             " Mail Empfänger 1
+                                       lv_rec2             " Mail Empfänger 2
+                                       tab2-lifnr.
+
+  ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  OUTPUT_EMAIL_CREATE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LT_ATT_CONTENT_TEXT  text
+*      -->P_LV_BIN_FILE  text
+*      -->P_LV_BIN_FILESIZE  text
+*      -->P_LV_SUBJECT  text
+*      -->P_LV_OBJDES_PDF  text
+*      -->P_LV_OBJDES_TXT  text
+*      -->P_LV_REC1  text
+*      -->P_LV_REC2  text
+*----------------------------------------------------------------------*
+FORM output_email_create TABLES pt_attach_txt         STRUCTURE soli
+                         USING  pv_bin_file_pdf       TYPE xstring
+                                pv_bin_filesize_pdf   TYPE i
+                                pv_subject            TYPE so_obj_des
+                                pv_objdes_pdf         TYPE sood-objdes
+                                pv_objdes_txt         TYPE sood-objdes
+                                pv_rec1               LIKE adr6-smtp_addr
+                                pv_rec2               LIKE adr6-smtp_addr
+                                pv_lifnr              TYPE lifnr.
+
+  DATA: lt_attach_txt TYPE soli_tab,
+        ls_attach_txt LIKE LINE OF lt_attach_txt,
+        lt_attach_xls TYPE soli_tab,
+        ls_attach_xls LIKE LINE OF lt_attach_txt,
+        lt_att_head   TYPE soli_tab,
+        ls_att_head   LIKE LINE OF lt_att_head.
+
+  lt_attach_txt[] = pt_attach_txt[].
+
+
+  DATA send_request  TYPE REF TO cl_bcs.
+  DATA document      TYPE REF TO cl_document_bcs.
+  DATA recipient     TYPE REF TO if_recipient_bcs.
+  DATA bcs_exception TYPE REF TO cx_bcs.
+  DATA sent_to_all   TYPE os_boolean.
+  DATA pdf_size      TYPE so_obj_len.
+  DATA pdf_content   TYPE solix_tab.
+  DATA pdf_xstring   TYPE xstring.
+  DATA: dec_menge    TYPE p DECIMALS 2,
+        dec_netpr    TYPE p DECIMALS 2,
+        dec_precio   TYPE  p DECIMALS 2,
+        dec_wrbtr    TYPE  p DECIMALS 2,
+        txt_menge    TYPE string,
+        txt_netpr    TYPE string,
+        txt_precio   TYPE string,
+        txt_wrbtr    TYPE string,
+        txt_budat    TYPE string,
+        txt_bldat    TYPE string,
+        txt_werks(3).
+
+  CONSTANTS:
+    lc_tab  TYPE c VALUE cl_bcs_convert=>gc_tab,
+    lc_crlf TYPE abap_cr_lf VALUE cl_abap_char_utilities=>cr_lf.
+
+  DATA: lv_line           TYPE string,
+        lv_binary_content TYPE solix_tab,
+        lv_size           TYPE so_obj_len.
+
+*     -------- create persistent send request ------------------------
+  send_request = cl_bcs=>create_persistent( ).
+
+
+*     create the document with attachments
+*     main document
+  document = cl_document_bcs=>create_document(
+                            i_type    = 'RAW'
+                            i_text    = gt_mail_body
+                            i_subject = pv_subject ).
+
+  " PDF Attachment
+  pdf_content = cl_document_bcs=>xstring_to_solix( pv_bin_file_pdf ).
+  pdf_size    = pv_bin_filesize_pdf.
+
+  document->add_attachment( i_attachment_type    = 'PDF'
+                            i_attachment_subject = pv_objdes_pdf
+                            i_attachment_size    = pdf_size
+                            i_att_content_hex    = pdf_content ).
+
+  " CSV Attachment
+  CONCATENATE
+  'PLANT' lc_tab
+  'MOVEMENT TYPE' lc_tab
+  'DOC. DATE' lc_tab
+  'REFERENCE' lc_tab
+  'MATERIAL DOCUMENT' lc_tab
+  'POSTING DATE' lc_tab
+  'MATERIAL' lc_tab
+  'DESCRIPTION' lc_tab
+  'GR QTY' lc_tab
+  'UNIT' lc_tab
+  'PURCHASE DOC' lc_tab
+  'UNIT PRICE' lc_tab
+  'PURCHASE PRICE' lc_tab
+  'AMOUNT' lc_tab
+  'CURRENCY' lc_tab
+  lc_crlf
+  INTO lv_line.
+
+
+  LOOP AT tab3 WHERE xselp = 'X' AND lifnr = pv_lifnr.
+    txt_werks  = tab3-werks.
+
+    dec_menge  = tab3-menge.
+    dec_netpr  = tab3-netpr.
+    dec_precio = tab3-precio.
+    dec_wrbtr  = tab3-wrbtr.
+
+    MOVE dec_menge TO txt_menge.
+    MOVE dec_netpr TO txt_netpr.
+    MOVE dec_precio TO txt_precio.
+    MOVE dec_wrbtr TO txt_wrbtr.
+
+*    INI - ECOIS23-473 14/09/2023 Date format dd-mm-yyyy
+    CLEAR: txt_bldat,txt_budat.
+    CONCATENATE tab3-bldat+6(2) tab3-bldat+4(2) tab3-bldat(4) INTO txt_bldat SEPARATED BY '-'.
+    CONCATENATE tab3-budat+6(2) tab3-budat+4(2) tab3-budat(4) INTO txt_budat SEPARATED BY '-'.
+*    FIN - ECOIS23-473 14/09/2023 Date format dd-mm-yyyy
+
+    CONCATENATE lv_line txt_werks lc_tab tab3-bwart lc_tab txt_bldat lc_tab tab3-xblnr lc_tab tab3-belnr lc_tab txt_budat lc_tab
+    tab3-matnr lc_tab tab3-txz01 lc_tab txt_menge lc_tab tab3-meins lc_tab tab3-ebeln lc_tab txt_netpr lc_tab txt_precio lc_tab
+    txt_wrbtr lc_tab tab3-waers lc_tab lc_crlf INTO lv_line.
+
+  ENDLOOP.
+
+  TRY.
+      cl_bcs_convert=>string_to_solix(
+        EXPORTING
+          iv_string   = lv_line
+          iv_codepage = '4103'  "suitable for MS Excel, leave empty
+          iv_add_bom  = 'X'     "for other doc types
+        IMPORTING
+          et_solix  = lv_binary_content
+          ev_size   = lv_size ).
+    CATCH cx_bcs.
+      MESSAGE e445(so).
+  ENDTRY.
+
+*     add the spread sheet as attachment to document object
+  document->add_attachment(
+    i_attachment_type    = 'XLS'
+    i_attachment_subject = pv_objdes_txt
+    i_attachment_size    = lv_size
+    i_att_content_hex    = lv_binary_content ).
+
+
+*     add document object to send request
+  send_request->set_document( document ).
+
+*     --------- add recipient (e-mail address) -----------------------
+  IF pv_rec1 IS NOT INITIAL.
+*       create recipient object
+    recipient = cl_cam_address_bcs=>create_internet_address( pv_rec1 ).
+*       add recipient object to send request
+    send_request->add_recipient( recipient ).
+  ENDIF.
+  IF pv_rec2 IS NOT INITIAL.
+*       create recipient object
+    recipient = cl_cam_address_bcs=>create_internet_address( pv_rec2 ).
+*       add recipient object to send request
+    send_request->add_recipient( recipient ).
+  ENDIF.
+
+*     ---------- send document ---------------------------------------
+  sent_to_all = send_request->send( i_with_error_screen = 'X' ).
+
+  COMMIT WORK.
+
+  IF sent_to_all IS INITIAL.
+    MESSAGE i500(sbcoms) WITH pv_rec1.
+  ELSE.
+    MESSAGE s022(so).
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  P_PRINT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM p_print .
+  REFRESH: tab2,tab3.
+  CLEAR: tab2,tab3.
+  LOOP AT tab WHERE xselp = 'X'.
+    tab2 = tab.
+    APPEND tab2.
+    tab3 = tab.
+    APPEND tab3.
+  ENDLOOP.
+
+  SORT tab2 BY lifnr ASCENDING ebeln ASCENDING.
+  DELETE ADJACENT DUPLICATES FROM tab2 COMPARING lifnr.
+
+* Table for sending attachments sorted by date
+  SORT tab3 BY lifnr ASCENDING budat ASCENDING.
+  LOOP AT tab2.
+
+    PERFORM print USING '' tab2-lifnr.
+  ENDLOOP.
+
+ENDFORM.
