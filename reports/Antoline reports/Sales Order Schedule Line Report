@@ -1,0 +1,1374 @@
+*&    (C)   P R I M U S  TECHSYSTEMS PVT. LTD.
+*&*--------------------------------------------------------------------*
+*& CLIENT           : SHRIRAM PISTON
+*& REPORT           : ZSDC000056
+*& DESCRIPTION      : Scheduling agreement/Sales order Report
+*& DEVLOPER NAME    : Tushar Pawar.
+*& FUNCTIONAL NAME  : Sonali Chavale
+*& DATE             : 12/06/2026
+*& TCODE            : ZSA00
+*&*--------------------------------------------------------------------*
+"providing customer, material, order quantity, and delivery schedule-line information
+REPORT ZSDC000056 LINE-SIZE 255 LINE-COUNT 65(0) MESSAGE-ID zc
+                                              NO STANDARD PAGE HEADING.
+
+CONSTANTS: verde(4)    VALUE '@08@',
+           amarillo(4) VALUE '@09@',
+           rojo(4)     VALUE '@0A@'.
+
+*----------------------------------------------------------------------*
+*      TABLAS DEL SISTEMA
+*----------------------------------------------------------------------*
+TABLES: likp,
+        zsd001,   "Registro de kamban
+        vbak,     "Cabecera documentos comerciales
+        vbap,     "Posiciones documentos comerciales
+        kna1,
+        vblb,
+        vbpa,     "Interlocutores de doc. ventas
+        vbep,     "REPARTOS EN PLANES DE ENTREGAS
+        vbkd,     "Datos documentos de ventas
+        tvko,     "Organizaciones de ventas
+        mara,     "Datos generales material
+        vbfa,     "Flujo de documentos
+        vekp,     "Tabla cabecera un.manipulación - embalajes
+        dd03l,    "Campos de tabla
+        dd04t,    "R/3-DD: Textos de los elementos de datos
+        vlpkm,
+        mvke,
+        knvv.
+
+
+TYPE-POOLS: slis.
+
+*----------------------------------------------------------------------
+* TABLAS INTERNAS
+*----------------------------------------------------------------------
+
+*------------WSDEVERP-1764-----20/03/2025-------------
+*DATA: BEGIN OF i_listado OCCURS 0.
+*DATA: marca(1).                        "marca de seleccion
+*INCLUDE STRUCTURE zsdc000056.
+*DATA: END OF i_listado.
+
+
+DATA: BEGIN OF i_listado OCCURS 0.
+DATA: marca(1).                        "marca de seleccion
+INCLUDE STRUCTURE zsdc000056.
+DATA: CANT_VBFA TYPE ZCANT_VBFA,
+cell_color type lvc_t_scol.
+DATA: END OF i_listado.
+*------------WSDEVERP-1764-----20/03/2025------FIN-------
+
+DATA: t_vbpa TYPE vbpa OCCURS 0 WITH HEADER LINE.
+
+DATA: t_vbfa TYPE vbfa OCCURS 0 WITH HEADER LINE.     "DEVELOP05, 07/29/2025, WSBUP-579
+
+DATA: BEGIN OF i_kna1 OCCURS 0,
+        kunnr LIKE kna1-kunnr,
+        name1 LIKE kna1-name1,
+      END OF i_kna1.
+DATA: BEGIN OF i_lfa1 OCCURS 0,
+        lifnr LIKE kna1-kunnr,
+        name1 LIKE kna1-name1,
+      END OF i_lfa1.
+
+DATA: BEGIN OF selecc OCCURS 20,
+        tabla    LIKE dd03l-tabname,
+        campo    LIKE dd03l-fieldname,
+*        TABLA(4) TYPE C,
+*        CAMPO(8) TYPE C,
+        rolln    LIKE dd03l-rollname,
+        marca(1) TYPE c,
+      END OF selecc.
+
+DATA: BEGIN OF i_pack OCCURS 0,
+        werks   LIKE vbap-werks,
+        matnr   LIKE mara-matnr,
+        matnrb  LIKE packkp-packnr,
+        trgqty  LIKE packpo-trgqty,
+        totlvol LIKE packkp-totlvol,
+        unitvol LIKE packkp-unitvol,
+        height  LIKE packkp-height,
+        width   LIKE packkp-width,
+        length  LIKE packkp-length,
+      END OF i_pack.
+
+DATA: d_sema(4).
+
+DATA: s_grid_settings TYPE lvc_s_glay,
+      titletext       TYPE lvc_title.
+DATA: i_grid_settings TYPE lvc_s_glay.
+DATA: is_u_layout TYPE slis_layout_alv.
+DATA: is_print TYPE slis_print_alv.
+
+
+
+DATA: ex_rate_error. " Error en la conversión del tipo de cambio
+DATA: ct_fieldcat TYPE slis_t_fieldcat_alv.
+
+DATA: f_auart(1).  "flag que indica si existen auart con 'LK' o 'LZ'
+DATA: f_vbtyp(1).  "flag que indica si vbtyp es 'E' y/o 'F'
+
+DATA: lt_t25a8  TYPE t25a8 OCCURS 0 WITH HEADER LINE.
+DATA: lt_t25a7  TYPE t25a7 OCCURS 0 WITH HEADER LINE.
+
+
+FIELD-SYMBOLS <lt_data>             TYPE ANY TABLE.
+FIELD-SYMBOLS: <ld_data> TYPE any.
+
+DATA          lr_data               TYPE REF TO data.
+DATA          lr_data_descr          TYPE REF TO cl_abap_datadescr.
+
+*----------------------------------------------------------------------
+* PANTALLA DE SELECCIÓN
+* ---------------------------------------------------------------------
+SELECTION-SCREEN BEGIN OF BLOCK bloque1 WITH FRAME TITLE TEXT-001.
+
+*PARAMETER  P_VKORG LIKE VRPMA-VKORG
+*Ps - 74807 - Multicentro   29/10/09
+SELECT-OPTIONS:
+                s_vkorg FOR vbak-vkorg
+* Fin ps 74807
+     OBLIGATORY MEMORY ID vko.    "Organizacion de ventas
+
+SELECT-OPTIONS:
+                s_werks FOR vbap-werks MEMORY ID vrk.
+
+SELECTION-SCREEN: SKIP 1.
+
+SELECT-OPTIONS:
+                s_vbtyp FOR vbak-vbtyp DEFAULT 'E' TO 'F',
+                s_auart FOR vbak-auart,
+                s_vbeln FOR vbak-vbeln,
+                s_posnr FOR vbap-posnr.
+
+SELECTION-SCREEN: SKIP 1.
+
+SELECT-OPTIONS:
+                s_kunnr FOR vbak-kunnr,
+                s_kunag FOR likp-kunnr,
+                s_desti FOR vbpa-kunnr, " ABG WSBUP-974 29.01.2026
+                s_ablad FOR vlpkm-ablad,
+                s_matnr FOR vbap-matnr,
+                s_kdmat FOR vbap-kdmat,
+                s_abrvw FOR vbak-abrvw.
+
+PARAMETERS: abart LIKE vblb-abart DEFAULT '1'.
+
+SELECT-OPTIONS:
+                s_abgru FOR vbap-abgru
+                    DEFAULT '70' OPTION NE SIGN I .
+PARAMETERS: pack  AS CHECKBOX DEFAULT ' ',
+            3rd_p AS CHECKBOX DEFAULT ' '.
+.
+
+SELECTION-SCREEN END OF BLOCK bloque1.
+
+
+
+*----------------------------------------------------------------------
+* SELECTION-SCREEN
+*----------------------------------------------------------------------
+AT SELECTION-SCREEN.
+
+* Autorización organización de ventas.
+
+  CLEAR tvko.
+*Ps - 74807 - Multicentro   29/10/09
+*  SELECT SINGLE VKORG INTO TVKO-VKORG FROM TVKO WHERE VKORG = P_VKORG.
+  SELECT vkorg INTO tvko-vkorg FROM tvko WHERE vkorg IN s_vkorg.
+* Fin ps 74807
+* Modificación: Ignacio. Cambio objeto de autorización 10.08.2020 08:54:24
+*    AUTHORITY-CHECK OBJECT 'Z_SD_VKORG'                    "comment by tushar
+*                    ID 'VKORG' FIELD tvko-vkorg.            "comment by tushar
+*  AUTHORITY-CHECK OBJECT 'V_VBRK_VKO'
+*           ID 'VKORG' FIELD tvko-vkorg
+*           ID 'ACTVT' FIELD '03'.
+* Fin modificación.Cambio objeto de autorización 10.08.2020 08:54:24
+*    IF sy-subrc <> 0.                                                 "comment by tushar
+*      MESSAGE ID 'VF' TYPE 'E' NUMBER '514' WITH tvko-vkorg.       "comment by tushar
+*    ENDIF.                                                           "comment by tushar
+*Ps - 74807 - Multicentro   29/10/09
+  ENDSELECT.
+* Fin ps 74807
+*----------------------------------------------------------------------
+* START-OF-SELECTION
+*----------------------------------------------------------------------
+START-OF-SELECTION.
+
+  PERFORM buscar_datos.
+* Salida formato ALV.
+  PERFORM get_select.
+  PERFORM salida_datos.
+
+
+*----------------------------------------------------------------------
+* FORM BUSCAR_DATOS.
+*----------------------------------------------------------------------
+FORM buscar_datos.
+
+  DATA: ld_tabix LIKE sy-tabix.
+
+  CLEAR i_listado.
+  REFRESH: i_listado, i_kna1, i_pack.
+
+  PERFORM check_s_vbtyp.
+  PERFORM check_s_auart.
+
+
+  IF f_vbtyp = 'N' OR  f_auart = 'N'.
+    PERFORM buscar_vbak.
+  ELSEIF f_vbtyp = '0' AND f_auart = '0'.
+    PERFORM buscar_vbak.
+* para hacer la seleccion por la tabla VLPKM, S_KDMAT tiene q estar
+* informado
+  ELSEIF NOT s_kdmat IS INITIAL.
+    PERFORM buscar_vlpkm.
+  ELSE.
+    PERFORM buscar_vbak.
+
+*------------WSDEVERP-1764-----20/03/2025---------------
+    PERFORM buscar_vbfa.
+*------------WSDEVERP-1764-----20/03/2025--------fin-----
+  ENDIF.
+
+  IF i_listado[] IS NOT INITIAL.
+    PERFORM cargar_descripciones.
+  ENDIF.
+* Inc 318308 03.11.2014
+* incluir gesto de transporte.
+  IF i_listado[] IS NOT INITIAL.
+    SELECT * FROM vbpa INTO TABLE t_vbpa
+        FOR ALL ENTRIES IN i_listado
+               WHERE vbeln = i_listado-vbeln
+                AND parvw IN ('ZR', 'RE', 'AG','RG', 'SP', 'SB'  ).
+  ENDIF.
+
+  LOOP AT i_listado.
+    ld_tabix = sy-tabix.
+    PERFORM  leer_vehiculo_modelo.
+
+*    Begin of insert, DEVELOP05, 07/29/2025, WSBUP-579
+   CLEAR t_vbfa.
+   SELECT SINGLE * FROM vbfa
+                   WHERE vbelv = @i_listado-vbeln
+                   AND posnv = @i_listado-posnr
+                   AND erdat = ( SELECT MAX( erdat ) FROM vbfa WHERE vbelv = @i_listado-vbeln AND posnv = @i_listado-posnr )
+                   INTO @t_vbfa .
+
+    i_listado-ld_date = t_vbfa-erdat.
+*    End of insert, DEVELOP05, 07/29/2025, WSBUP-579
+
+    CLEAR t_vbpa.
+    READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                               posnr = i_listado-posnr
+                               parvw = 'RE'.
+    IF sy-subrc NE 0.
+      READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                                 posnr = '000000'
+                                 parvw = 'RE'.
+    ENDIF.
+    i_listado-desti = t_vbpa-kunnr.
+
+    CLEAR t_vbpa.
+    READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                               posnr = i_listado-posnr
+                               parvw = 'AG'.
+    IF sy-subrc NE 0.
+      READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                                 posnr = '000000'
+                                 parvw = 'AG'.
+    ENDIF.
+
+    i_listado-lifnr = t_vbpa-lifnr.
+    i_listado-knref_lif = t_vbpa-knref.
+
+    CLEAR t_vbpa.
+    READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                               posnr = i_listado-posnr
+                               parvw = 'ZR'.
+    IF sy-subrc NE 0.
+      READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                                 posnr = '000000'
+                                 parvw = 'ZR'.
+    ENDIF.
+    i_listado-lifn2 = t_vbpa-lifnr.
+
+*consigna
+    CLEAR t_vbpa.
+    READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                               posnr = i_listado-posnr
+                               parvw = 'SB'.
+    IF sy-subrc NE 0.
+      READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                                 posnr = '000000'
+                                 parvw = 'SB'.
+    ENDIF.
+    i_listado-lifn7 = t_vbpa-kunnr.
+
+    READ TABLE i_kna1 WITH KEY kunnr = i_listado-lifn7.
+    IF sy-subrc = 0.
+      i_listado-lifn7_n = i_kna1-name1.
+    ELSE.
+      SELECT SINGLE name1 FROM kna1 INTO i_listado-lifn7_n WHERE kunnr = i_listado-lifn7.
+      i_kna1-kunnr =  i_listado-lifn7_n.
+      i_kna1-name1 =  i_listado-lifn7.
+      APPEND i_kna1.
+    ENDIF.
+**************
+*responsable pago
+    CLEAR t_vbpa.
+    READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                               posnr = i_listado-posnr
+                               parvw = 'RG'.
+    IF sy-subrc NE 0.
+      READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                                 posnr = '000000'
+                                 parvw = 'RG'.
+    ENDIF.
+    i_listado-kunnr_rg = t_vbpa-kunnr.
+    READ TABLE i_kna1 WITH KEY kunnr = i_listado-kunnr_rg.
+    IF sy-subrc = 0.
+      i_listado-name_rg = i_kna1-name1.
+    ELSE.
+      SELECT SINGLE name1 FROM kna1 INTO i_listado-name_rg WHERE kunnr = i_listado-kunnr_rg.
+      i_kna1-kunnr =  i_listado-kunnr_rg.
+      i_kna1-name1 =  i_listado-name_rg.
+      APPEND i_kna1.
+    ENDIF.
+
+    CLEAR t_vbpa.
+    READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                               posnr = i_listado-posnr
+                               parvw = 'SP'.
+    IF sy-subrc NE 0.
+      READ TABLE t_vbpa WITH KEY vbeln = i_listado-vbeln
+                                 posnr = '000000'
+                                 parvw = 'SP'.
+    ENDIF.
+    i_listado-kunnr_sp = t_vbpa-lifnr.
+    READ TABLE i_lfa1 WITH KEY lifnr = i_listado-kunnr_sp.
+    IF sy-subrc = 0.
+      i_listado-name_sp = i_lfa1-name1.
+    ELSE.
+      SELECT SINGLE name1 FROM lfa1 INTO i_listado-name_sp WHERE lifnr = i_listado-kunnr_sp.
+      i_lfa1-lifnr =  i_listado-kunnr_sp.
+      i_lfa1-name1 =  i_listado-name_sp.
+      APPEND i_kna1.
+
+    ENDIF.
+
+***************
+
+*    SELECT SINGLE kunnr FROM vbpa INTO i_listado-desti WHERE vbeln = i_listado-vbeln AND parvw = 'RE' AND posnr = i_listado-posnr.
+*    IF sy-subrc NE 0.
+*      SELECT SINGLE kunnr FROM vbpa INTO i_listado-desti WHERE vbeln = i_listado-vbeln AND parvw = 'RE' AND posnr = ''.
+*    ENDIF.
+* ABG Inc 133063 02.01.2019
+*    SELECT SINGLE lifnr knref FROM vbpa INTO (i_listado-lifnr, i_listado-knref_lif) WHERE vbeln = i_listado-vbeln AND parvw = 'SP' AND posnr = i_listado-posnr.
+*    IF sy-subrc NE 0.
+*      SELECT SINGLE lifnr knref FROM vbpa INTO (i_listado-lifnr, i_listado-knref_lif) WHERE vbeln = i_listado-vbeln AND parvw = 'SP' AND posnr = ''.
+*    ENDIF.
+*** Fin Inc 133063 02.01.2019
+
+    READ TABLE i_kna1 WITH KEY kunnr = i_listado-desti.
+    IF sy-subrc NE 0.
+      SELECT SINGLE name1 FROM kna1 INTO i_listado-name_desti WHERE kunnr = i_listado-desti.
+      i_kna1-kunnr =  i_listado-desti.
+      i_kna1-name1 =  i_kna1-name1.
+      APPEND i_kna1.
+    ENDIF.
+    i_listado-name_desti = i_kna1-name1.
+********************* Datos de forecast o OFH.
+    i_listado-abart = abart.
+    SELECT SINGLE labnk abrdt usr01 "usr04
+      FROM vblb
+         INTO (i_listado-labnk, i_listado-abrdt, i_listado-usr01) " , i_listado-usr04_d)
+                                WHERE vbeln = i_listado-vbeln
+                                  AND posnr = i_listado-posnr
+                                  AND abrli = '0000'
+                                  AND abart = i_listado-abart.
+*********************+
+    MODIFY i_listado INDEX ld_tabix.
+    CLEAR i_listado.
+  ENDLOOP.
+* Inc 318308 03.11.2014
+  CLEAR i_listado.
+  SORT i_listado BY kunnr vbeln posnr.
+
+  IF 3rd_p = 'X'.
+    LOOP AT i_listado.
+      SELECT SINGLE * FROM ekkn INTO @DATA(w_ekkn) WHERE vbeln = @i_listado-vbeln
+                                                    AND vbelp = @i_listado-posnr.
+      IF sy-subrc = 0.
+        SELECT SINGLE * FROM ekko INTO @DATA(w_ekko) WHERE ebeln = @w_ekkn-ebeln.
+        SELECT SINGLE * FROM ekpo INTO @DATA(w_ekpo) WHERE ebeln = @w_ekkn-ebeln
+                                                       AND ebelp = @w_ekkn-ebelp.
+        i_listado-ebeln = w_ekpo-ebeln.
+        i_listado-ebelp = w_ekpo-ebelp.
+        i_listado-mm_lifnr = w_ekko-lifnr.
+        SELECT SINGLE name1 ort01 FROM lfa1 INTO (i_listado-mm_name1, i_listado-mm_ort01)
+            WHERE lifnr = w_ekko-lifnr.
+        i_listado-mm_lgort = w_ekpo-lgort.
+        i_listado-mm_bstae = w_ekpo-bstae.
+        i_listado-mm_inco1 = w_ekko-inco1.
+        i_listado-mm_inco2 = w_ekko-inco2.
+        MODIFY i_listado.
+        CLEAR i_listado.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+  DELETE i_listado WHERE desti NOT IN s_desti.
+ENDFORM.                    "BUSCAR_DATOS
+
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_SELECT
+*&---------------------------------------------------------------------*
+FORM get_select.
+
+
+*  CVVECC60 -ALICIA NICOLAS 27/03/2007
+*  Modificacion:
+*  SELECT * FROM DD03L WHERE TABNAME EQ 'ZSDC000056'.
+  SELECT * FROM dd03l WHERE tabname EQ 'ZSDC000056' ORDER BY position.
+* FIN CVVECC60 -ALICIA NICOLAS 27/03/2007
+    MOVE 'ZSDC000056' TO  selecc-tabla.
+    MOVE 'X' TO selecc-marca.
+    MOVE dd03l-fieldname TO selecc-campo.
+    MOVE dd03l-rollname  TO selecc-rolln.
+    APPEND selecc.
+  ENDSELECT.
+
+      MOVE 'X' TO selecc-marca.
+      selecc-campo = 'CANT_VBFA'.
+      selecc-rolln = 'ZCANT_VBFA'.
+      APPEND selecc.
+
+ENDFORM.                    " GET_SELECT
+
+
+*&---------------------------------------------------------------------*
+*&      Form  SALIDA_DATOS
+*&---------------------------------------------------------------------*
+FORM salida_datos.
+
+  is_u_layout-box_fieldname     = 'MARCA'.
+  is_u_layout-zebra             = 'X'.
+  is_u_layout-info_fieldname    = 'COLOR'.
+  is_u_layout-coltab_fieldname = 'CELL_COLOR'.
+
+  s_grid_settings-coll_end_l = 'X'.
+
+  is_print-no_print_listinfos = 'X'.
+
+*CARGA DE CAMPOS
+  PERFORM carga_campos CHANGING ct_fieldcat.
+
+* Llamada a la función
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program      = 'ZSDC000056'
+      i_grid_title            = sy-title
+      i_grid_settings         = i_grid_settings
+      i_callback_user_command = 'USER_COMMAND'
+      is_layout               = is_u_layout
+      it_fieldcat             = ct_fieldcat
+      i_default               = 'X'
+      i_save                  = 'A'
+*     IS_VARIANT              = l_variant
+      is_print                = is_print
+    TABLES
+      t_outtab                = i_listado.
+  IF sy-subrc <> 0.
+  ENDIF.
+
+
+
+ENDFORM.                    " SALIDA_DATOS
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CARGA_CAMPOS
+*&---------------------------------------------------------------------*
+FORM carga_campos CHANGING p_ct_fieldcat.
+
+
+  LOOP AT selecc.
+    IF selecc-marca = 'X'.
+      PERFORM campo_st USING selecc-campo selecc-tabla .
+    ENDIF.
+  ENDLOOP.
+
+*---------WSDEVERP-1764-------20/03/2025--------------
+  DATA: ls_fieldcat TYPE slis_fieldcat_alv.
+
+  CLEAR ls_fieldcat.
+
+   READ TABLE  ct_fieldcat INTO ls_fieldcat
+   WITH KEY fieldname = 'CANT_VBFA'.
+    IF SY-SUBRC = 0.
+        IF SY-LANGU <> 'S'.
+        ls_fieldcat-seltext_s = 'Flow S.A'.
+        ls_fieldcat-seltext_m = 'Delivery Plan Flow'.
+       else.
+      ls_fieldcat-seltext_m = 'Flujo Plan de Entrega'.  " Texto alternativo
+      ls_fieldcat-seltext_s = 'Flujo S.A'.  " Texto alternativo
+       ENDIF.
+    MODIFY ct_fieldcat FROM ls_fieldcat INDEX sy-tabix.
+
+
+   ENDIF.
+*---------WSDEVERP-1764-------20/03/2025-------FIN-------
+
+ENDFORM.                    " CARGA_CAMPOS
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CAMPO_ST
+*&---------------------------------------------------------------------*
+FORM campo_st USING fieldname ref_tabname.
+
+  DATA: ls_fieldcat TYPE slis_fieldcat_alv.
+
+  CLEAR ls_fieldcat.                     "Borrado cabecera
+  SELECT  SINGLE * FROM dd04t
+                  WHERE rollname EQ selecc-rolln
+                    AND ddlanguage EQ sy-langu.
+  IF sy-subrc NE 0.
+    dd04t-ddtext =  fieldname.
+  ENDIF.
+
+  ls_fieldcat-fieldname = fieldname.
+  ls_fieldcat-ref_tabname = ref_tabname.
+  ls_fieldcat-seltext_m = dd04t-ddtext.
+
+  IF fieldname EQ 'KDMAT2'.
+    ls_fieldcat-no_out = abap_true.
+  ENDIF.
+  APPEND ls_fieldcat TO ct_fieldcat.
+
+
+ENDFORM.                "Campo
+
+
+*&---------------------------------------------------------------------*
+*&      Form  LEER_MAT_ANTIGUO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_mat_antiguo.
+
+  CLEAR mara.
+  SELECT SINGLE * FROM mara WHERE matnr = vbap-matnr.
+
+ENDFORM.                    " LEER_MAT_ANTIGUO
+
+
+*&---------------------------------------------------------------------*
+*&      Form  LEER_EMBALAJE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_embalaje.
+
+  RANGES: s_matnr FOR mara-matnr.
+
+
+
+  CLEAR: i_listado-usr04,
+         i_listado-vhilm_ku,
+         i_listado-vhilm.
+
+  SELECT SINGLE vbeln rfmng
+    INTO (vbfa-vbeln, vbfa-rfmng)
+    FROM vbfa
+   WHERE vbelv = i_listado-vbeln
+     AND posnv = i_listado-posnr
+     AND vbtyp_n = 'X'.
+
+  IF sy-subrc = 0.
+    WRITE vbfa-rfmng TO i_listado-usr04 DECIMALS 0.
+    MOVE vbfa-rfmng TO i_listado-trgqty.
+    SELECT SINGLE vhilm_ku vhilm tavol voleh
+      INTO (i_listado-vhilm_ku, i_listado-vhilm,
+      i_listado-totlvol, i_listado-unitvol)
+      FROM vekp
+     WHERE venum = vbfa-vbeln.
+
+
+  ELSE. "Buscamos propuesta de embalaje.
+
+* miramos primero su tabla interna.
+    READ TABLE i_pack WITH KEY werks = i_listado-werks
+                               matnr = i_listado-matnr.
+
+    IF sy-subrc NE 0.  "no exisste
+
+      REFRESH: s_matnr.
+      CLEAR:  s_matnr.
+      s_matnr-sign = 'I'.
+      s_matnr-option = 'EQ'.
+      s_matnr-low = i_listado-matnr.
+      COLLECT s_matnr.
+
+
+
+* Ponemos el display en abap_false para que no se visualice el ALV
+* y recuperamos todas las normas de embalaje
+      cl_salv_bs_runtime_info=>set(
+        EXPORTING display  = abap_false
+                  metadata = abap_false
+                  data     = abap_true ).
+
+      SUBMIT zhu0034  WITH p_werks = i_listado-werks
+*                   WITH s_kschl IN s_kschl
+                     WITH s_matnr IN s_matnr
+        AND RETURN.
+      TRY.
+          cl_salv_bs_runtime_info=>get_data_ref(
+               IMPORTING r_data_descr      = lr_data_descr ).
+
+          CREATE DATA lr_data           TYPE HANDLE lr_data_descr.
+
+          ASSIGN lr_data->*           TO <lt_data>.
+
+          cl_salv_bs_runtime_info=>get_data(
+            IMPORTING
+              t_data      = <lt_data>
+                 ).
+
+          LOOP AT <lt_data> ASSIGNING <ld_data>.
+            MOVE-CORRESPONDING <ld_data> TO i_pack.
+*           APPEND i_normas.
+            EXIT.
+          ENDLOOP.
+
+        CATCH cx_salv_bs_sc_runtime_info.
+          MESSAGE `Unable to retrieve ALV data` TYPE 'E'.
+      ENDTRY.
+
+      cl_salv_bs_runtime_info=>clear_all( ).
+
+**********************
+      i_pack-werks = i_listado-werks.
+      i_pack-matnr = i_listado-matnr.
+      APPEND i_pack.
+
+    ENDIF.
+
+    i_listado-vhilm  = i_pack-matnrb.
+    i_listado-trgqty = i_pack-trgqty.
+    i_listado-totlvol = i_pack-totlvol.
+    i_listado-unitvol = i_pack-unitvol.
+    i_listado-laeng = i_pack-height.
+    i_listado-breit = i_pack-width.
+    i_listado-hoehe = i_pack-length.
+
+
+  ENDIF.
+
+ENDFORM.                    " LEER_EMBALAJE
+
+
+*&---------------------------------------------------------------------*
+*&      Form  authority_check
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+FORM authority_check USING   u_tcd.
+
+  AUTHORITY-CHECK OBJECT 'S_TCODE'
+           ID 'TCD' FIELD u_tcd.
+  IF sy-subrc NE 0.
+    MESSAGE e172(00) WITH u_tcd.
+  ENDIF.
+
+ENDFORM.                    " AUTHORITY_CHECK
+
+
+*&---------------------------------------------------------------------*
+*&      Form  leer_datos_pedido
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_datos_pedido.
+  CLEAR vbkd.
+  SELECT SINGLE bstkd ihrez_e inco1 inco2 zterm ktgrd kdgrp empst design_reg_no prsdt
+    INTO (i_listado-bstkd, i_listado-ihrez_e,
+          i_listado-inco1, i_listado-inco2,
+          i_listado-zterm, i_listado-ktgrd,
+          i_listado-kdgrp, i_listado-empst,
+*Ini. Mod. DGANHIM01 (DMG) 24.06.2021 Añadir campo VBKD-DESIGN_REG_NO
+          i_listado-design_reg_no,
+*Fin. Mod. DGANHIM01 (DMG) 24.06.2021 Añadir campo VBKD-DESIGN_REG_NO
+* ABG Inc 470135 Añadir campo 03.11.2021
+          i_listado-prsdt)
+* Fin ABG Inc 470135 Añadir campo 03.11.2021
+    FROM vbkd
+   WHERE vbeln = i_listado-vbeln
+     AND posnr = i_listado-posnr.
+  IF sy-subrc NE 0.
+* Leemos los datos de su cabecera.
+    SELECT SINGLE bstkd ihrez_e inco1 inco2 zterm ktgrd kdgrp empst prsdt
+      INTO (i_listado-bstkd, i_listado-ihrez_e,
+            i_listado-inco1, i_listado-inco2,
+            i_listado-zterm, i_listado-ktgrd,
+            i_listado-kdgrp, i_listado-empst,
+* ABG Inc 470135 Añadir campo 03.11.2021
+          i_listado-prsdt)
+* Fin ABG Inc 470135 Añadir campo 03.11.2021
+      FROM vbkd
+     WHERE vbeln = i_listado-vbeln
+       AND posnr = '000000'.
+  ENDIF.
+
+ENDFORM.                    " leer_datos_pedido
+
+
+*&---------------------------------------------------------------------*
+*&      Form  leer_material_antiguo
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_material_antiguo.
+  DATA: lv_prdha LIKE mara-prdha.
+* ABG Tarea 5195 recuperamos la jerarquía de la VBAP
+*  SELECT SINGLE prodh INTO i_listado-prdha
+*    FROM vbap
+*    WHERE vbeln = i_listado-vbeln
+*      AND posnr = i_listado-posnr.
+* ABG Fin Tarea 5195
+
+  SELECT SINGLE bismt prdha
+    INTO (i_listado-bismt, lv_prdha)
+    FROM mara
+   WHERE matnr = i_listado-matnr.
+
+** ABG Tarea 5195 recuperamos la jerarquía de la VBAP
+*  IF i_listado-prdha IS INITIAL.
+*    i_listado-prdha = lv_prdha.
+*  ENDIF.
+* ABG Fin Tarea 5195
+
+ENDFORM.                    " leer_material_antiguo
+
+
+*&---------------------------------------------------------------------*
+*&      Form  leer_nombre_cliente
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_nombre_cliente.
+  SELECT SINGLE name1 ort01
+    INTO (i_listado-name1, i_listado-orto1)
+    FROM kna1
+   WHERE kunnr = i_listado-kunnr.
+ENDFORM.                    " leer_nombre_cliente
+
+
+*&---------------------------------------------------------------------*
+*&      Form  leer_vblb
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_vblb.
+  CLEAR i_listado-usr01.
+  SELECT SINGLE usr01
+    INTO i_listado-usr01
+    FROM vblb
+   WHERE vbeln = i_listado-vbeln
+     AND posnr = i_listado-posnr
+     AND abrli = '0000'
+     AND abart = '1'.
+ENDFORM.                    " leer_vblb
+
+
+*&---------------------------------------------------------------------*
+*&      Form  buscar_vbpa
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbpa.
+  SELECT SINGLE kunnr ablad
+    INTO (i_listado-kunag, i_listado-ablad)
+    FROM vbpa
+   WHERE vbeln =  i_listado-vbeln
+     AND posnr =  i_listado-posnr
+     AND parvw =  'WE'
+     AND kunnr IN s_kunag.
+  IF sy-subrc = 0.
+    PERFORM buscar_vbap.
+  ELSE.
+    SELECT SINGLE kunnr ablad
+      INTO (i_listado-kunag, i_listado-ablad)
+      FROM vbpa
+     WHERE vbeln =  i_listado-vbeln
+       AND posnr =  00000
+       AND parvw =  'WE'
+       AND kunnr IN s_kunag.
+    IF sy-subrc = 0.
+      PERFORM buscar_vbap.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    " buscar_vbpa
+
+
+*&---------------------------------------------------------------------*
+*&      Form  buscar_vbap
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbap.
+
+  CLEAR vbap.
+  SELECT SINGLE matnr kdmat werks arktx route ktgrm  lgort
+          j_1bcfop j_1btaxlw1 j_1btaxlw2 j_1btxsdc waerk taxm1
+          pstyv PRODH
+    INTO (i_listado-matnr, i_listado-kdmat,
+          i_listado-werks, i_listado-arktx,
+          i_listado-route, i_listado-ktgrm,
+          i_listado-lgort, i_listado-j_1bcfop,
+          i_listado-j_1btaxlw1, i_listado-j_1btaxlw2,
+          i_listado-j_1btxsdc, i_listado-waerk,
+          i_listado-taxm1, i_listado-pstyv, i_listado-PRODH)
+    FROM vbap
+   WHERE vbeln = i_listado-vbeln
+     AND posnr = i_listado-posnr
+     AND matnr IN s_matnr
+     AND werks IN s_werks.
+
+  IF sy-subrc = 0.
+*Material antiguo de material
+    PERFORM leer_material_antiguo.
+    PERFORM leer_nombre_cliente.
+    IF pack = 'X'.
+      PERFORM leer_embalaje.
+    ENDIF.
+*Mod.Javi Arce.May08-Clarear los campos  de unidad, peso...
+*    IF I_LISTADO-VHILM <> ' '.
+*      PERFORM BUSCAR.
+*    ENDIF.
+*    PERFORM buscar.
+*End Mod.Javi Arce.May08.
+*   PERFORM leer_vblb.
+    PERFORM leer_datos_pedido.
+    PERFORM leer_eikto.
+    PERFORM leer_vehiculo_modelo.
+* INI CSDPASAPD-1228
+    PERFORM buscar_vbkd_traty.
+* FIN CSDPASAPD-1228
+    APPEND i_listado.
+  ENDIF.
+ENDFORM.                    " buscar_vbap
+
+
+*&---------------------------------------------------------------------*
+*&      Form  buscar_vbpa_sin_posnr
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbpa_sin_posnr.
+*SELECT SINGLE  KUNNR KNREF ABLAD
+*El pto de descarga está a nivel de posición.
+  SELECT SINGLE  kunnr knref
+  INTO (i_listado-kunag, i_listado-knref)
+     FROM vbpa
+    WHERE vbeln =  i_listado-vbeln
+      AND posnr =  00000
+      AND parvw =  'WE'
+      AND kunnr IN s_kunag.
+*      AND ablad IN s_ablad.
+  IF sy-subrc = 0.
+    PERFORM buscar_vbap_sin_posnr.
+  ENDIF.
+ENDFORM.                    " buscar_vbpa_sin_posnr
+
+
+*&---------------------------------------------------------------------*
+*&      Form  buscar_vbap_sin_posnr
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbap_sin_posnr.
+  DATA: p_error(1).
+  CLEAR vbap.
+  SELECT posnr matnr kdmat werks arktx route ktgrm abgru lgort
+          j_1bcfop j_1btaxlw1 j_1btaxlw2 j_1btxsdc waerk taxm1
+          pstyv prodh
+    INTO (i_listado-posnr, i_listado-matnr,
+          i_listado-kdmat, i_listado-werks,
+          i_listado-arktx, i_listado-route,
+          i_listado-ktgrm, i_listado-abgru,
+          i_listado-lgort, i_listado-j_1bcfop,
+          i_listado-j_1btaxlw1, i_listado-j_1btaxlw2,
+          i_listado-j_1btxsdc , i_listado-waerk,
+          i_listado-taxm1, i_listado-pstyv, i_listado-prodh)
+    FROM vbap
+   WHERE vbeln = i_listado-vbeln
+     AND posnr IN s_posnr
+     """""AND kdmat IN s_kdmat
+     AND werks IN s_werks
+     AND matnr IN s_matnr
+     AND abgru IN s_abgru.
+
+    i_listado-kdmat2 = i_listado-kdmat.
+    CONDENSE i_listado-kdmat2 NO-GAPS.
+    CHECK i_listado-kdmat  IN s_kdmat OR
+          i_listado-kdmat2 IN s_kdmat.
+
+*Material antiguo de material
+    PERFORM leer_material_antiguo.
+    PERFORM leer_nombre_cliente.
+    IF pack = 'X'.
+      PERFORM leer_embalaje.
+    ENDIF.
+*Mod.Javi Arce.May08-Clarear los campos  de unidad, peso...
+*    IF I_LISTADO-VHILM <> ' '.
+*      PERFORM BUSCAR.
+*    ENDIF.
+*    PERFORM buscar.
+*End Mod.Javi Arce.May08.
+*   PERFORM leer_vblb.
+    PERFORM leer_datos_pedido.
+    PERFORM leer_eikto.
+    PERFORM puesto_descarga USING p_error.
+    PERFORM buscar_vbap_con_posnr.
+* INI CSDPASAPD-1228
+    PERFORM buscar_vbkd_traty.
+* FIN CSDPASAPD-1228
+    IF p_error IS INITIAL.
+      APPEND i_listado.
+    ELSE.
+      CLEAR i_listado.
+    ENDIF.
+  ENDSELECT.
+ENDFORM.                    " buscar_vbap_sin_posnr
+
+
+*&---------------------------------------------------------------------*
+*&      Form  check_s_auart
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_F_AUART  text
+*----------------------------------------------------------------------*
+FORM check_s_auart.
+  IF f_vbtyp <> 'N'.
+    f_auart = '2'.
+    IF s_auart IS INITIAL.
+      f_auart = '0'.
+    ELSE.
+      LOOP AT s_auart.
+        IF s_auart-low CS 'LK' AND
+           s_auart-sign = 'I' AND s_auart-option = 'EQ'.
+        ELSEIF s_auart-low CS 'LZ' AND
+               s_auart-sign = 'I' AND s_auart-option = 'EQ'.
+        ELSE.
+          f_auart = 'N'.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    " check_s_auart
+
+
+*&---------------------------------------------------------------------*
+*&      Form  check_s_vbtyp
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_F_VBTYP  text
+*----------------------------------------------------------------------*
+FORM check_s_vbtyp.
+  f_vbtyp = '1'.
+  IF s_vbtyp IS INITIAL.
+    f_vbtyp = '0'.
+  ELSE.
+    LOOP AT s_vbtyp.
+      IF s_vbtyp-low  = 'E' AND s_vbtyp-high = 'F' AND
+         s_vbtyp-sign = 'I' AND s_vbtyp-option = 'BT'.
+      ELSEIF s_vbtyp-low = 'E' AND
+             s_vbtyp-sign = 'I' AND s_vbtyp-option = 'EQ'.
+      ELSEIF s_vbtyp-low = 'F' AND
+             s_vbtyp-sign = 'I' AND s_vbtyp-option = 'EQ'.
+      ELSE.
+        f_vbtyp = 'N'.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.                    " check_s_vbtyp
+
+
+*&---------------------------------------------------------------------*
+*&      Form  buscar_vlpkm
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vlpkm.
+  SELECT vlpkm~vkorg vlpkm~vbeln vlpkm~kunnr vlpkm~auart vlpkm~knref
+         vlpkm~abgru vlpkm~posnr vlpkm~kdmat
+    INTO (i_listado-vkorg, i_listado-vbeln,
+          i_listado-kunnr, i_listado-auart,
+          i_listado-knref,
+          i_listado-abgru, i_listado-posnr,
+          i_listado-kdmat)
+    FROM vlpkm
+    WHERE "kdmat IN s_kdmat
+     "AND
+     kunnr           IN s_kunnr
+     AND ablad       IN s_ablad
+*Ps - 74807 - Multicentro   29/10/09
+*     AND VKORG =  P_VKORG
+     AND vkorg       IN  s_vkorg
+* Fin ps 74807
+     AND vlpkm~vbeln IN s_vbeln
+     AND vlpkm~posnr IN s_posnr
+     AND abgru       IN s_abgru
+     AND auart       IN s_auart.
+
+    i_listado-kdmat2 = i_listado-kdmat.
+    CONDENSE i_listado-kdmat2 NO-GAPS.
+    CHECK i_listado-kdmat  IN s_kdmat OR
+          i_listado-kdmat2 IN s_kdmat.
+
+    PERFORM buscar_vbpa.
+    CLEAR i_listado.
+
+  ENDSELECT.
+
+ENDFORM.                    " buscar_vlpkm
+
+
+*&---------------------------------------------------------------------*
+*&      Form  buscar_vbak
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbak.
+*Mod Javi Arce.Ago10.SDR512-Mod.ZSA00, campo VBAK-ABDIS.
+*  SELECT vkorg vbeln kunnr auart waerk
+*    INTO (i_listado-vkorg, i_listado-vbeln,
+*          i_listado-kunnr, i_listado-auart,
+*          i_listado-waerk)
+  SELECT vbak~vkorg vbak~vbeln vbak~kunnr vbak~auart vbak~waerk vbak~abdis
+         vbak~abrvw vbak~taxk1 vbak~ernam vbak~erdat vbak~erzet
+    INTO (i_listado-vkorg, i_listado-vbeln,
+          i_listado-kunnr, i_listado-auart,
+          i_listado-waerk, i_listado-abdis, i_listado-abrvw,
+          i_listado-taxk1,
+          i_listado-ernam, i_listado-erdat, i_listado-erzet)
+*End Mod Javi Arce.Ago10.SDR512
+    FROM vbak
+    WHERE kunnr      IN s_kunnr
+*Ps - 74807 - Multicentro   29/10/09
+*     AND VKORG =  P_VKORG
+      AND vkorg      IN  s_vkorg
+* Fin ps 74807
+      AND vbak~vbeln IN s_vbeln
+      AND vbtyp      IN s_vbtyp
+      AND auart      IN s_auart
+      AND  abrvw     IN s_abrvw.
+
+    PERFORM buscar_vbpa_sin_posnr.
+    CLEAR i_listado.
+
+  ENDSELECT.
+
+ENDFORM.                    " buscar_vbak
+
+
+*&---------------------------------------------------------------------*
+*&      Form  leer_eikto
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_eikto.
+  SELECT SINGLE eikto INTO i_listado-eikto
+    FROM knvv
+   WHERE kunnr = i_listado-kunnr
+     AND vkorg = i_listado-vkorg
+     AND vtweg = 'ZA'
+     AND spart = 'SA'.
+ENDFORM.                    " leer_eikto
+*&---------------------------------------------------------------------*
+*&      Form  BUSCAR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar.
+
+  CLEAR mara.
+
+  CLEAR i_listado-ntgew.
+  CLEAR i_listado-gewei.
+  CLEAR i_listado-laeng.
+  CLEAR i_listado-breit.
+  CLEAR i_listado-hoehe.
+  CLEAR i_listado-meabm.
+
+*Mod.Javi Arce.May08-Clarear los campos  de unidad, peso...
+  IF i_listado-vhilm <> ' '.
+    SELECT SINGLE * FROM mara WHERE matnr = i_listado-vhilm.
+    MOVE mara-ntgew TO i_listado-ntgew.
+    MOVE mara-gewei TO i_listado-gewei.
+    MOVE mara-laeng TO i_listado-laeng.
+    MOVE mara-breit TO i_listado-breit.
+    MOVE mara-hoehe TO i_listado-hoehe.
+    MOVE mara-meabm TO i_listado-meabm.
+*    MOVE mara-prdha TO i_listado-prdha.
+  ENDIF.
+*End Mod.Javi Arce.May08.
+
+ENDFORM.                    " BUSCAR
+
+*&---------------------------------------------------------------------*
+*&      Form  USER_COMMAND
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM user_command USING r_ucomm LIKE sy-ucomm
+                    rs_selfield TYPE slis_selfield.
+
+  READ TABLE i_listado INDEX rs_selfield-tabindex.
+
+
+  CASE r_ucomm.
+
+    WHEN '&IC1'. " Click sobre algun plan de entregas
+
+      CASE rs_selfield-sel_tab_field.
+
+        WHEN '1-VBELN'. "CLICK SOBRE PLAN ENTREGAS
+          IF i_listado-vbeln NE ' '.
+            SET PARAMETER ID 'LPN' FIELD i_listado-vbeln.
+            SET PARAMETER ID 'VPO' FIELD i_listado-posnr.
+            PERFORM authority_check USING 'VA33'.
+            CALL TRANSACTION 'VA33' AND SKIP FIRST SCREEN.
+          ENDIF.
+        WHEN '1-EBELN'. "CLICK SOBRE DOCUMENTO DE COMPRAS
+          IF i_listado-ebeln NE ' '.
+            SET PARAMETER ID 'SAG' FIELD i_listado-ebeln.
+            PERFORM authority_check USING 'ME33L'.
+            CALL TRANSACTION 'ME33L' AND SKIP FIRST SCREEN.
+          ENDIF.
+      ENDCASE.
+  ENDCASE.
+ENDFORM.                    "USER_COMMAND
+*&---------------------------------------------------------------------*
+*&      Form  PUESTO_DESCARGA
+*&---------------------------------------------------------------------*
+FORM puesto_descarga CHANGING p_error.
+  CLEAR p_error.
+
+  SELECT SINGLE ablad
+    INTO i_listado-ablad
+    FROM vbpa
+   WHERE vbeln =  i_listado-vbeln
+     AND posnr =  i_listado-posnr
+     AND parvw =  'WE'
+     AND ablad IN s_ablad
+     AND kunnr IN s_kunag.
+  IF sy-subrc <> 0.
+    SELECT SINGLE ablad
+      INTO i_listado-ablad
+      FROM vbpa
+     WHERE vbeln =  i_listado-vbeln
+       AND posnr =  00000
+       AND parvw =  'WE'
+       AND ablad IN s_ablad
+       AND kunnr IN s_kunag.
+    IF sy-subrc <> 0 AND s_ablad[] IS NOT INITIAL.
+      p_error = 'X'.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " PUESTO_DESCARGA
+*&---------------------------------------------------------------------*
+*&      Form  LEER_VEHICULO_MODELO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM leer_vehiculo_modelo .
+
+  SELECT SINGLE target1 target2 FROM Zk9rssi0100002
+             INTO (i_listado-wwveh, i_listado-wwmod)
+              WHERE sour1_from = i_listado-matnr.
+
+  IF sy-subrc = 0.
+*    READ TABLE lt_t25a7 WITH KEY wwveh = i_listado-wwveh.      comment by tushar start
+*    i_listado-bezek = lt_t25a7-bezek.
+*    READ TABLE lt_t25a8 WITH KEY wwmod = i_listado-wwmod.
+*    i_listado-bezap = lt_t25a8-bezek.                         comment by tushar end
+  ENDIF.
+*tARGET2
+
+ENDFORM.                    " LEER_VEHICULO_MODELO
+*&---------------------------------------------------------------------*
+*&      Form  CARGAR_DESCRIPCIONES
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM cargar_descripciones .
+
+  REFRESH: lt_t25a7, lt_t25a8.
+
+  SELECT * FROM t25a7 INTO TABLE lt_t25a7
+                      WHERE spras = sy-langu.
+
+  SELECT * FROM t25a8 INTO TABLE lt_t25a8
+                      WHERE spras = sy-langu.
+
+
+ENDFORM.                    " CARGAR_DESCRIPCIONES
+*&---------------------------------------------------------------------*
+*&      Form  BUSCAR_VBAP_CON_POSNR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbap_con_posnr .
+  DATA: v_knref LIKE vbpa-knref.
+  SELECT SINGLE knref
+  INTO v_knref
+     FROM vbpa
+    WHERE vbeln =  i_listado-vbeln
+      AND posnr =  i_listado-posnr
+      AND parvw =  'WE'
+      AND kunnr IN s_kunag.
+
+  IF sy-subrc = 0 AND v_knref IS NOT INITIAL.
+    i_listado-knref = v_knref.
+  ENDIF.
+*      AND ablad IN s_ablad.
+ENDFORM.                    " BUSCAR_VBAP_CON_POSNR
+*&---------------------------------------------------------------------*
+*&      Form  BUSCAR_VBAP_CON_POSNR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbkd_traty.
+  SELECT SINGLE traty
+     INTO i_listado-traty
+     FROM vbkd
+     WHERE vbeln =  i_listado-vbeln
+       AND posnr =  i_listado-posnr.
+
+  IF sy-subrc EQ 0.
+    SELECT SINGLE vtext
+      INTO i_listado-vtext
+      FROM tvtyt
+      WHERE traty = i_listado-traty
+        AND spras = sy-langu.
+
+  ELSE.
+*-----------WSDEVERP-1803-------10/04/2025--------
+    SELECT SINGLE traty
+     INTO i_listado-traty
+     FROM vbkd
+     WHERE vbeln =  i_listado-vbeln
+       AND posnr =  ''.
+
+   IF sy-subrc EQ 0.
+    SELECT SINGLE vtext
+      INTO i_listado-vtext
+      FROM tvtyt
+      WHERE traty = i_listado-traty
+        AND spras = sy-langu.
+      ENDIF.
+*-----------WSDEVERP-1803-------10/04/2025---FIN-----
+  ENDIF.
+
+ENDFORM.                    " BUSCAR_VBKD_TRATY
+*&---------------------------------------------------------------------*
+*&      Form  BUSCAR_VBFA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM buscar_vbfa .
+
+
+  DATA: it_vbfa TYPE vbfa OCCURS 0 WITH HEADER LINE.
+  DATA: lin LIKE sy-tabix.
+
+
+    LOOP AT i_listado ASSIGNING field-symbol(<lf_listado>) .
+      CLEAR lin.
+      SELECT * FROM vbfa INTO TABLE it_vbfa
+               WHERE vbelv = <lf_listado>-vbeln.
+        IF sy-subrc = 0.
+          DESCRIBE TABLE it_vbfa LINES lin.
+          <lf_listado>-cant_vbfa = lin.
+
+          IF <lf_listado>-cant_vbfa >= 99999.
+             append value #(  color = value #( col  = 6 int = 0 inv = 0 )  ) to
+              <lf_listado>-cell_color.
+          ENDIF.
+
+        ENDIF.
+    ENDLOOP.
+
+ENDFORM.
