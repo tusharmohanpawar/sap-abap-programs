@@ -1,0 +1,2479 @@
+*& DESCRIPTION      : Price list report
+displaying customer, material, condition record, validity, and pricing details.
+REPORT ZSDL0002 LINE-SIZE 255 LINE-COUNT 65(0) MESSAGE-ID zc
+              NO STANDARD PAGE HEADING.
+
+CONSTANTS: c_zt(2) TYPE c VALUE 'ZT'.
+
+TABLES:
+  tvko,      " Organización de ventas
+  ztvko,     " Tabla de datos maestros por organización de ventas
+  kna1,      " Maestro de Clientes
+  a005,      " Cliente/Material
+  makt,      " Textos breves de material
+  knmt,      " Referencias del cliente
+  mara,      " Materiales
+  zmt001w,
+  t682i,     " Condiciones: Secuencias de acceso (forma generada)
+  t682z,     " Condiciones: Secuencias de acceso (campos)
+  t683s,     " Esquemas de cálculo: Datos
+  t683v,     " Esquema de cálculo: Determinación en documentos de ventas
+  t685,      " Condiciones: clases
+  t685a,     " Condiciones: Clases: Datos adicionales elemento de precio
+  t685t,     " Descripción de condiciones
+  t686d,     " Descripción de condiciones
+  konh,      " Cabecera de las condiciones
+  mbew,      " Valoración de materiales
+  marc,      " Datos centro p.material
+  konp,      " Precios
+  dd03l,
+  t001w,
+  dd04t,
+  vapma,
+  vbap.
+
+************************************************************************
+* Tablas Internas
+************************************************************************
+* Tabla interna para almacenar las distintas condiciones de precios
+* existentes en función de los datos seleccionados por pantalla (esta
+* tabla se usará para saber cuántas columnas de condiciones de precios
+* se imprimirán)
+DATA: BEGIN OF i_vkorg OCCURS 0,
+        vkorg LIKE tvko-vkorg,
+        waers LIKE tvko-waers,
+      END OF i_vkorg.
+
+* Tabla interna para almacenar los datos de la tabla A005
+DATA: BEGIN OF i_a005 OCCURS 0.
+*       INCLUDE STRUCTURE a005.
+        INCLUDE STRUCTURE a995.
+      DATA: END OF i_a005.
+
+* Tabla interna para almacenar las distintas condiciones de precios
+* existentes en función de los datos seleccionados por pantalla (esta
+* tabla se usará para saber cuántas columnas de condiciones de precios
+* se imprimirán)
+DATA: BEGIN OF i_kschl OCCURS 0,
+        kschl LIKE a005-kschl,
+      END OF i_kschl.
+
+* Tabla interna para almacenar los distintos precios de las condiciones
+* existentes en función de los datos seleccionados por pantalla
+DATA: BEGIN OF i_kbetr OCCURS 0,
+        vtext LIKE t685t-vtext,
+        kbetr LIKE konp-kbetr,
+        kschl LIKE a005-kschl,
+        inco1 LIKE a995-inco1,
+      END OF i_kbetr.
+
+* Tabla interna para almacenar los precios mostrar en los listados
+DATA: BEGIN OF i_datos OCCURS 0,
+        vkorg      LIKE tvko-vkorg,     " Organización de ventas
+        kunnr      LIKE kna1-kunnr,     " Cliente
+        name1      LIKE kna1-name1,     " Nombre del cliente
+        prgrp      LIKE pgmi-prgrp,     " grupo productos
+        matnr      LIKE a005-matnr,     " Material
+        maktx      LIKE makt-maktx,     " Descripción del material
+        kdmat      LIKE knmt-kdmat,     " Ref. material del cliente
+        stprs      LIKE mbew-stprs,     " Precio estándar
+        dif        LIKE pmrhb7-relamnt_dif,
+        kschl      LIKE a005-kschl,     " Clase de condición
+        kbetr      LIKE konp-kbetr,     " Importe
+        konwa      LIKE konp-konwa,     " Moneda
+        kpein      LIKE konp-kpein,     " Cantidad Base
+        datbi      LIKE a005-datbi,     " fecha desde
+        datab      LIKE a005-datab,     " fecha hasta
+        kzust      LIKE konh-kzust,     " motivo del cambio
+        linea1     LIKE konh-linea1,    " texto explicativo
+        linea2     LIKE konh-linea2,    "texto explicativo 2
+*       PRT_PORCENTAJE LIKE KONP-KBETR, " % modificación
+*       PRT_PORCENTAJ1 LIKE KONP-KBETR, " % s/ precio estándar
+* Cambiamos estas dos variables por error dump en programa.
+        porcentaje TYPE p DECIMALS 2,
+        porcentaj1 TYPE p DECIMALS 2,
+        kmein          LIKE konp-kmein,     " unidad medida condición
+        meins          LIKE mara-meins,     " unidad medida base
+        peinh          LIKE mbew-peinh,     " Ctd.base precio estándar
+        erdat          LIKE konh-erdat,    "191117 - Añadir campo ZS02
+        ernam          LIKE konh-ernam,    "191117 - Añadir campo ZS02
+        zc01           TYPE p DECIMALS 2,
+        zc02           TYPE p DECIMALS 2,
+        zc03           TYPE p DECIMALS 2,
+        zc04           TYPE p DECIMALS 2,
+        zc05           TYPE p DECIMALS 2,
+        zc06           TYPE p DECIMALS 2,
+        zc07           TYPE p DECIMALS 2,
+        inco1          LIKE a995-inco1,
+* Inc 420909 30.05.2016
+        name_text      LIKE adrp-name_text,
+* Fin Inc 420909
+      END OF i_datos.
+
+* Tabla interna para almacenar las tablas a las que se deberá acceder,
+* la secuencia de acceso y los campos que contiene cada tabla
+DATA: BEGIN OF i_tabla OCCURS 100,
+        kolnr   LIKE t682i-kolnr,      " Secuencia de acceso
+        kotabnr LIKE rsrd1-objname,    " Nombre de la tabla
+        zifna   LIKE t682z-zifna,      " Nombre del campo
+      END OF i_tabla.
+
+DATA: BEGIN OF i_tabla2 OCCURS 100.
+        INCLUDE STRUCTURE i_tabla.
+      DATA: END OF i_tabla2.
+
+* Tabla interna para almacenar las condiciones para el acceso a cada una
+* de las tablas
+DATA: i_tab(72) OCCURS 100 WITH HEADER LINE.
+
+************************************************************************
+* Variables
+************************************************************************
+DATA:
+  d_vkorg     LIKE tvko-vkorg, " se usa para detectar el cambio de organizac
+  d_kunnr     LIKE kna1-kunnr, " se usa para detectar el cambio de cliente
+  d_matnr     LIKE a005-matnr, " se usa para detectar el cambio de material
+  d_maktx     LIKE makt-maktx,
+  d_kdmat     LIKE knmt-kdmat,
+  d_kschl     LIKE a005-kschl,
+  d_pos       TYPE i, " se usa para encolumnar las condiciones de precios
+  d_cont      TYPE i, " se usa para contar las condiciones de precios que se
+  " imprimen en la cabecera
+  d_kbetr     LIKE konp-kbetr, "para calcular el procentaje de modificación.
+  d_resto     TYPE f,
+  d_flag(1), "Si es 'X', no caben las condiciones en una sola línea
+  d_name1     LIKE kna1-name1,
+  d_konwa     LIKE konp-konwa,
+  d_kpein     LIKE konp-kpein,
+  d_error(12). "Un material tiene precios con distintas monedas ó con
+"distintas cantidades base para una fecha.
+
+DATA lr_datos LIKE i_datos.
+
+DATA: d_and(4),
+      d_or(3).
+
+************************************************************************
+* Constantes
+************************************************************************
+CONSTANTS:
+  c_kvewe_a LIKE t685-kvewe VALUE 'A',
+  c_kappl_v LIKE t685-kappl VALUE 'V'.
+
+*****************************************************************
+* DATA ALV                                                      *
+*****************************************************************
+DATA: BEGIN OF i_tabl OCCURS 0,
+        vkorg      LIKE tvko-vkorg,      " Organización de ventas
+        kschl      LIKE a005-kschl,      " Clase de Condicion
+        kunnr      LIKE kna1-kunnr,      " Cliente
+        name1      LIKE kna1-name1,      " Descrip cliente
+        prgrp      LIKE pgmi-prgrp,      " Grupo de productos
+        matnr      LIKE a005-matnr,      " Material
+        maktx      LIKE makt-maktx,      " Descripción del material
+        kdmat      LIKE knmt-kdmat,      " Ref. material del cliente
+        stprs      LIKE mbew-stprs,      " Precio estándar
+        dif        LIKE pmrhb7-relamnt_dif,
+        vtextc     LIKE t685t-vtext,      " Clase de condición
+        kbetr      LIKE konp-kbetr,      " Importe
+        rate       TYPE ukurs_curr,
+        konwa      LIKE konp-konwa,      " Moneda
+        kpein      LIKE konp-kpein,      " Cantidad Base
+* INI CSDPASAPD-1234
+        kmein      LIKE konp-kmein,      " Unidad medida
+* FIN CSDPASAPD-1234
+        kbetrc     LIKE konp-kbetr,      " Importe
+        konwac     LIKE konp-konwa,      " Moneda
+        datbi      LIKE a005-datbi,      " fecha desde
+        datab      LIKE a005-datab,      " fecha hasta
+        kzust      LIKE konh-kzust,      " motivo del cambio
+        linea1     LIKE konh-linea1,    "texto explicativo
+        linea2     LIKE konh-linea2,    "texto explicativo2
+        vtextm     LIKE t686d-vtext,    " descripcion del motivo
+*        PORCENTAJE LIKE KONP-KBETR, " % modificación
+*        PORCENTAJ1 LIKE KONP-KBETR, " % s/ precio estándar
+        porcentaje TYPE p DECIMALS 2,
+        porcentaj1 TYPE p DECIMALS 2,
+        erdat      LIKE konh-erdat,    "191117 - Añadir campo ZS02
+        ernam      LIKE konh-ernam,    "191117 - Añadir campo ZS02
+        zc01       TYPE p DECIMALS 2,
+        zc02       TYPE p DECIMALS 2,
+        zc03       TYPE p DECIMALS 2,
+        zc04       TYPE p DECIMALS 2,
+        zc05       TYPE p DECIMALS 2,
+        zc06       TYPE p DECIMALS 2,
+        zc07       TYPE p DECIMALS 2,
+        inco1      LIKE a995-inco1,
+* Inc 420909 30.05.2016
+        name_text  LIKE adrp-name_text,
+* Fin Inc 420909
+      END OF i_tabl.
+
+TYPE-POOLS: slis.
+DATA:
+  i_grid_settings    TYPE lvc_s_glay,
+  is_layout          TYPE slis_layout_alv,
+  is_variant         TYPE disvariant,
+  it_fieldcat        TYPE slis_t_fieldcat_alv,
+  it_sort            TYPE slis_t_sortinfo_alv,
+  ls_sort            TYPE slis_sortinfo_alv,
+  it_list_commentary TYPE slis_t_listheader,
+  ls_list_commentary TYPE slis_listheader.
+DATA: tab_list_of_list TYPE slis_t_listheader,
+      s_line           TYPE slis_listheader.
+DATA: ls_fieldcat TYPE slis_fieldcat_alv.
+************************************************************************
+* PARAMETROS
+************************************************************************
+SELECTION-SCREEN: BEGIN OF BLOCK marco WITH FRAME TITLE TEXT-017.
+SELECT-OPTIONS s_vkorg FOR tvko-vkorg MEMORY ID vko. "Organización
+*Si no se rellena centro => centro = org. ventas
+SELECT-OPTIONS s_werks FOR t001w-werks
+                       NO INTERVALS NO-EXTENSION.
+SELECT-OPTIONS s_kunnr FOR kna1-kunnr MEMORY ID kun         " Cliente
+                MATCHCODE OBJECT debi.
+SELECT-OPTIONS s_kschl FOR a005-kschl MEMORY ID vks         " Condición
+               DEFAULT 'PR00'
+               MATCHCODE OBJECT zkschl.
+SELECT-OPTIONS s_datab FOR a005-datab OBLIGATORY NO-EXTENSION
+               DEFAULT sy-datum.
+SELECT-OPTIONS s_erdat FOR konh-erdat NO-EXTENSION.         "PS200801
+
+SELECT-OPTIONS s_matnr FOR a005-matnr MEMORY ID mat         " Material
+                MATCHCODE OBJECT mat1h.
+* Modificacion GAI6 14.08.2002 -> posibilidad quitar obsoletos
+PARAMETERS: p_obso AS CHECKBOX.
+* Fin Modificacion GAI6 14.08.2002.
+SELECTION-SCREEN: SKIP.
+PARAMETERS p_op1 RADIOBUTTON GROUP gru1. "Listado de precios por condic
+PARAMETERS p_op2 RADIOBUTTON GROUP gru1. "Evolución de precios
+SELECTION-SCREEN: END OF BLOCK marco.
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN BEGIN OF BLOCK tipo1 WITH FRAME TITLE TEXT-025.
+* Modif NC - solo ALV.
+*PARAMETERS : alv  RADIOBUTTON GROUP g1 DEFAULT 'X',
+*             list RADIOBUTTON GROUP g1.
+PARAMETERS: alv(1) DEFAULT 'X' NO-DISPLAY.
+PARAMETERS: list(1) DEFAULT ' ' NO-DISPLAY.
+PARAMETERS: fichero LIKE rlgrap-filename .
+
+SELECTION-SCREEN END OF BLOCK tipo1.
+
+SELECTION-SCREEN FUNCTION KEY 1.
+
+TABLES: sscrfields.
+
+INITIALIZATION.
+* modif NC - 02/08/2022
+*MOVE '@17@' TO sscrfields-functxt_01.
+  MOVE 'EVOL' TO sscrfields-functxt_01.
+
+
+***********************************************************************
+* INCLUDES
+************************************************************************
+
+
+
+************************************************************************
+* Logica de Procesos
+************************************************************************
+AT SELECTION-SCREEN.
+
+  CASE sy-ucomm.
+    WHEN 'FC01'.
+      AUTHORITY-CHECK OBJECT 'S_TCODE'
+           ID 'TCD' FIELD 'ZSD045'.
+      IF sy-subrc NE 0.
+        MESSAGE e172(00) WITH 'ZSD045'.
+      ELSE.
+
+*        SUBMIT ZSDC000071_B  VIA SELECTION-SCREEN. " AND RETURN.
+        SUBMIT zsdc000071  VIA SELECTION-SCREEN. " AND RETURN.
+      ENDIF.
+
+  ENDCASE.
+  PERFORM oculta.
+* Validación de errores de la pantalla de selección
+  PERFORM validar_organizacion.
+
+* Valido la autorización a todas las organizaciones de ventas de s_vkorg
+  PERFORM cargar_organizaciones.
+  LOOP AT i_vkorg.
+    PERFORM vkorg_chequeo USING i_vkorg-vkorg.
+  ENDLOOP.
+
+  PERFORM validar_cliente.
+  PERFORM validar_condicion.
+  PERFORM validar_material.
+
+************************************************************************
+START-OF-SELECTION.
+
+  IF alv = 'X'.
+    PERFORM sel.
+  ENDIF.
+
+* Inicio ASM 04.12.2000
+
+** Si ha seleccionado alguna condición de precio, incluye 'PR00' porque
+** siempre ha de aparecer
+*  IF NOT S_KSCHL[] IS INITIAL.
+*    MOVE 'PR00' TO S_KSCHL-LOW.
+*    MOVE 'I'    TO S_KSCHL-SIGN.
+*    MOVE 'EQ'   TO S_KSCHL-OPTION.
+*    APPEND S_KSCHL.
+*  ENDIF.
+
+* Obtener los datos que cumplen las condiciones de selección de pantalla
+  PERFORM obtener_datos.
+
+  if  p_op1 = 'X'. "imprimir registros...
+    MOVE-CORRESPONDING i_datos[] to i_tabl[].
+  else.
+   perform historico_precios.
+
+  endif.
+
+* No existen entradas para los valores de la selección
+  IF i_datos[] is initial.
+*  if  sy-subrc <> 0.
+    MESSAGE ID 'ZC' TYPE 'S' NUMBER '011'.
+  ENDIF.
+
+* Escribe la línea del último material
+*  IF NOT p_op1 IS INITIAL.
+*    PERFORM escribir_linea.
+*  ENDIF.
+
+IF alv = 'X'.
+  PERFORM cal_cambio.
+
+  IF i_tabl[] IS NOT INITIAL.
+    PERFORM alv_display.
+  ELSE.
+    MESSAGE 'No data found.' TYPE 'S'.
+  ENDIF.
+
+ENDIF.
+
+************************************************************************
+* Cabecera de Pagina
+************************************************************************
+TOP-OF-PAGE.
+
+* Escribir la cabecera del listado
+  PERFORM cabecera_listado.
+* Criterios de selección del listado
+  PERFORM criterios_seleccion.
+* Escribil la cabecera de las líneas de detalle
+  PERFORM cabecera_lineas_detalle.
+
+TOP-OF-PAGE DURING LINE-SELECTION.
+
+* Escribir la cabecera del listado
+  PERFORM cabecera_listado.
+* Criterios de selección del listado
+  PERFORM criterios_seleccion.
+* Escribil la cabecera de las líneas de detalle
+  PERFORM cabecera_lineas_detalle.
+
+************************************************************************
+*Definición y control de acciones a tomar según entrada del usuario
+************************************************************************
+
+************************************************************************
+*                 FORMS ADICIONALES
+************************************************************************
+
+*&---------------------------------------------------------------------*
+*&      Form  VALIDAR_ORGANIZACION
+*&---------------------------------------------------------------------*
+* Se comprueba que la organización de ventas exista
+*----------------------------------------------------------------------*
+FORM validar_organizacion.
+
+* Valida el centro desde
+  SELECT SINGLE * FROM tvko
+    WHERE vkorg = s_vkorg-low.
+
+* Error si no existe la organización de ventas
+  IF sy-subrc <> 0.
+    MESSAGE e037 WITH s_vkorg-low.
+  ENDIF.
+
+* Valida el centro hasta
+  IF s_vkorg-high <> ''.
+    IF s_werks IS INITIAL.
+    ELSE.
+* Si se indica centro, poner sólo una org.ventas.
+      MESSAGE ID 'VL' TYPE 'E' NUMBER '090'.
+    ENDIF.
+    SELECT SINGLE * FROM tvko
+      WHERE vkorg = s_vkorg-high.
+
+* Error si no existe la organización de ventas
+    IF sy-subrc <> 0.
+      MESSAGE e037 WITH s_vkorg-high.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    "VALIDAR_ORGANIZACION
+
+*&---------------------------------------------------------------------*
+*&      Form  VALIDAR_CLIENTE
+*&---------------------------------------------------------------------*
+* Se comprueba que el cliente exista
+*----------------------------------------------------------------------*
+FORM validar_cliente.
+
+  SELECT SINGLE * FROM kna1
+    WHERE kunnr IN s_kunnr.
+
+* Error si no existe el cliente
+  IF sy-subrc <> 0.
+    MESSAGE ID 'IM' TYPE 'E' NUMBER '706'.
+  ENDIF.
+
+ENDFORM.                    "VALIDAR_CLIENTE
+
+*&---------------------------------------------------------------------*
+*&      Form  VALIDAR_CONDICION
+*&---------------------------------------------------------------------*
+* Se comprueba que la condición de precio exista
+*----------------------------------------------------------------------*
+FORM validar_condicion.
+
+  DATA:
+    l_d_lineas LIKE sy-tabix.
+* 1 obtener todas las condicones.
+  CLEAR i_kschl.
+  REFRESH i_kschl.
+  SELECT  * FROM  t685a WHERE kappl = c_kappl_v
+                             AND   kschl IN s_kschl
+                             AND ( koaid = 'B' OR  koaid = 'A' ) .
+    i_kschl = t685a-kschl.
+    APPEND i_kschl.
+  ENDSELECT.
+* Inicio ASM 4.12.2000
+*  SELECT SINGLE * FROM A005
+*    WHERE KSCHL IN S_KSCHL.
+* Obtener las condiciones de precio que cumplen las condiciones de
+* selección
+* Vamos a dejar tambien sacar la condicion ZPRE de presupuestacion.
+  LOOP AT i_kschl.
+*  CLEAR I_KSCHL.
+*  REFRESH I_KSCHL.
+    IF i_kschl NE 'ZPRE'.
+* buscamos sus esquemas de precios.
+      CLEAR t683v.
+      SELECT kalsm FROM t683v
+                   INTO t683v-kalsm
+                  WHERE vkorg IN s_vkorg.
+* buscamos las condiciones de los esquemas de precios.
+        CLEAR t683s.
+        SELECT SINGLE * FROM t683s
+                    WHERE kvewe = c_kvewe_a
+                      AND kappl = c_kappl_v
+                      AND kalsm = t683v-kalsm
+                      AND kschl = i_kschl-kschl.
+        IF sy-subrc = 0.
+          EXIT.
+        ENDIF.
+*      IF T683S-KSCHL(1) = 'Z'.
+*        I_KSCHL-KSCHL = T683S-KSCHL.
+**        APPEND I_KSCHL.
+**        CLEAR I_KSCHL.
+*      ELSE.
+*        CLEAR T685A.
+*        SELECT SINGLE * FROM T685A
+*                        WHERE KAPPL = C_KAPPL_V
+*                          AND KSCHL = T683S-KSCHL
+*                          AND KOAID = 'B'.
+*        IF SY-SUBRC = 0.
+*          I_KSCHL-KSCHL = T683S-KSCHL.
+*          APPEND I_KSCHL.
+*          CLEAR I_KSCHL.
+*        ENDIF.
+*      ENDIF.
+      ENDSELECT.
+      IF sy-subrc NE 0.
+        DELETE i_kschl.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  DESCRIBE TABLE i_kschl LINES l_d_lineas.
+
+* Fin ASM 4.12.2000
+
+* Error si no existe la condición del precio
+  IF l_d_lineas IS INITIAL AND NOT s_kschl IS INITIAL.
+    MESSAGE e148 WITH s_kschl.
+  ENDIF.
+
+ENDFORM.                    "VALIDAR_CONDICION
+
+*&---------------------------------------------------------------------*
+*&      Form  VALIDAR_MATERIAL
+*&---------------------------------------------------------------------*
+* Se comprueba que el material existe en la tabla MARA.
+*----------------------------------------------------------------------*
+FORM validar_material.
+
+  SELECT SINGLE * FROM mara WHERE matnr IN s_matnr.
+
+* Error si no existe el material
+  IF sy-subrc <> 0.
+    MESSAGE ID '12' TYPE 'E' NUMBER '706'.
+  ENDIF.
+
+ENDFORM.                    "VALIDAR_MATERIAL
+
+*&---------------------------------------------------------------------*
+*&      Form  OBTENER_DATOS
+*&---------------------------------------------------------------------*
+* Se obtienen los datos que cumplen las condiciones seleccionadas
+* por pantalla
+*----------------------------------------------------------------------*
+FORM obtener_datos.
+
+  CLEAR: i_a005, a005, i_datos.
+  REFRESH: i_a005, i_datos.
+
+  CLEAR: ztvko, i_kschl.
+  SELECT kschl FROM ztvko
+               APPENDING CORRESPONDING FIELDS OF TABLE i_kschl
+              WHERE vkorg IN s_vkorg.
+  SORT i_kschl.
+  DELETE ADJACENT DUPLICATES FROM i_kschl.
+
+* OPCION 1: Listado de precios por cliente en una fecha
+  IF NOT p_op1 IS INITIAL.
+
+* Recupera las distintas condiciones de precios existentes en función
+* de los datos seleccionados en pantalla
+* Inicio ASM 4.12.2000
+*    SELECT KSCHL FROM A005 INTO TABLE I_KSCHL
+*                    WHERE VKORG IN S_VKORG
+*                    AND   KUNNR IN S_KUNNR
+*                    AND   MATNR IN S_MATNR
+*                    AND   KSCHL IN S_KSCHL
+*                    AND   DATAB <= S_DATAB-LOW
+*                    AND   DATBI >= S_DATAB-LOW.
+*     CLEAR T685.
+*     SELECT KSCHL FROM T685 INTO TABLE I_KSCHL
+*                 WHERE KVEWE = C_KVEWE_A
+*                   AND KAPPL = C_KAPPL_V
+*                   AND KSCHL IN S_KSCHL.
+
+*
+** Lee las organizaciones de venta/clientes/materiales/condiciones
+** seleccionadas por pantalla y vigente a la fecha indicada
+*    SELECT * FROM A005 INTO TABLE I_A005
+*                     WHERE VKORG IN S_VKORG
+*                     AND   KUNNR IN S_KUNNR
+*                     AND   MATNR IN S_MATNR
+*                     AND   KSCHL IN S_KSCHL
+*                     AND   DATAB <= S_DATAB-LOW
+*                     AND   DATBI >= S_DATAB-LOW.
+*
+*    SORT I_A005 BY VKORG KUNNR MATNR KSCHL.
+
+    CLEAR: i_kschl, i_a005.
+    REFRESH i_a005.
+    LOOP AT i_kschl.
+*     Obtener las tablas a las que se deberá acceder para obtener el nº
+*     de reg. de condición, la secuencia de acceso y los campos clave de
+*     dichas tablas
+      PERFORM obtener_tablas USING  i_kschl-kschl.
+      PERFORM obtener_datos_tablas.
+    ENDLOOP.
+* Fin ASM 04.12.2000
+
+* Se inicializan variables para detectar el cambio de cliente y/o de
+* de material
+    d_kunnr = ''.
+    d_matnr = ''.
+
+    CLEAR i_a005.
+    LOOP AT i_a005.
+
+      CLEAR: kna1, knmt, konp, makt.
+
+* Modificación RAFA (30.01.2001)
+      IF ( i_a005-datab <= s_datab-low ) AND
+         ( i_a005-datbi >= s_datab-low ) AND
+         ( i_a005-kschl IN s_kschl )     AND
+         ( i_a005-kschl <> 'GRWR' ).
+* FIN modificación RAFA (30.01.2001)
+
+
+* si cambia de cliente ó de material, inicializa variables
+        IF ( i_a005-kunnr <> d_kunnr )
+           OR ( i_a005-matnr <> d_matnr ).
+          IF d_matnr ='' OR d_kunnr =''.
+            d_matnr = i_a005-matnr.
+            d_kunnr = i_a005-kunnr.
+          ELSE.
+            d_matnr = i_a005-matnr.
+            d_kunnr = i_a005-kunnr.
+          ENDIF.
+        ENDIF.
+
+* Recupera el nombre del cliente
+        SELECT SINGLE * FROM kna1
+                     WHERE kunnr = i_a005-kunnr.
+
+* Recupera la referencia del cliente                 comment start deepak
+        SELECT SINGLE * FROM knmt
+                 WHERE vkorg = i_a005-vkorg
+                       AND   kunnr = i_a005-kunnr
+                       AND   matnr = i_a005-matnr.
+***INICIO PMA 26.02.2008: Petición de desarrollo de Nacho cano para grupo
+*  de Trabajo "Precios". Cuando no exista el campo KNMT-KMDAT se obtendrá
+*  de la tabla VBAP.
+        IF sy-subrc <> 0. "buscamos la ref. cliente planes de entrega
+          SELECT *
+            FROM vapma
+            WHERE matnr = i_a005-matnr " Componente de la lista de Materiales
+              AND vkorg = i_a005-vkorg " Parámetro de selección
+              AND trvog = '3'     " Planes de entrega
+              AND kunnr = i_a005-kunnr " El cliente -> viene de VLPKM-KUNNR
+*              AND abgru ne '70' " No existe el campo abgru en la tabla vlpma
+              .
+            SELECT SINGLE kdmat
+            FROM vbap INTO knmt-kdmat
+            WHERE vbeln = vapma-vbeln
+              AND posnr = vapma-posnr
+              AND abgru NE '70' .
+          ENDSELECT.
+        ENDIF.
+***FIN PMA 26.02.2008
+
+* Recupera la descripción del material
+        SELECT SINGLE * FROM makt
+                  WHERE matnr = i_a005-matnr
+                  AND spras = sy-langu.
+
+* Recupera el precio
+        SELECT SINGLE * FROM konp
+                 WHERE knumh = i_a005-knumh.
+        CHECK konp-loevm_ko <> 'X'.  "Sin marca borrado.
+* Modificacio GAI6 14.08.2002
+* Chequeo quitar Obsoletos.
+        IF p_obso = 'X'.
+          IF s_werks IS INITIAL.
+            SELECT SINGLE * FROM marc WHERE matnr = i_a005-matnr
+                                      AND   werks = i_a005-vkorg
+                                      AND   mmsta = c_zt.
+          ELSE.
+            SELECT SINGLE * FROM marc WHERE matnr = i_a005-matnr
+                                      AND   werks = s_werks
+                                      AND   mmsta = c_zt.
+          ENDIF.
+          IF sy-subrc = 0. "esta obsoleto saltamos la carga de datos.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+
+* Fin modifcacion GAI6 14.08.2002
+
+*Inicio Modif PS 1911117 - Añadir KHON-ERDAT.
+* Recupera el motivo del cambio de precio
+        SELECT SINGLE * FROM konh
+                 WHERE knumh = i_a005-knumh.
+        CHECK konp-loevm_ko <> 'X'.  "Sin marca borrado.
+* Fin Modif PS 191117.
+
+* Almacenar los datos en la tabla I_DATOS
+        i_datos-vkorg = i_a005-vkorg.
+        i_datos-kunnr = i_a005-kunnr.
+        i_datos-inco1 = i_a005-inco1.
+        i_datos-name1 = kna1-name1.
+        i_datos-matnr = i_a005-matnr.
+        i_datos-maktx = makt-maktx.
+        i_datos-kdmat = knmt-kdmat.
+        i_datos-kschl = i_a005-kschl.
+* Modif NC - 25/04/2024 OJO PRECIO PARA MONEDAS JPN y VTN
+
+        IF konp-konwa IS NOT INITIAL.  "ojo si la moneda es YEN o parecida.
+
+          DATA: ld_amount_ext LIKE  bapicurr-bapicurr,
+                ld_amount_sap TYPE bp_wjl.
+*          ld_sap_code   TYPE tcurc-waers.
+
+          ld_amount_sap = konp-kbetr.
+*    ld_sap_code = konp-konwa.
+
+          CALL FUNCTION 'AIA_TOOL_CURRENCY_SAP_TO_EXTER'
+            EXPORTING
+              i_amount_sap = ld_amount_sap
+              i_sap_code   = konp-konwa
+            IMPORTING
+              e_amount_ext = ld_amount_ext.
+
+          konp-kbetr = ld_amount_ext.
+
+        ENDIF.
+
+        i_datos-kbetr = konp-kbetr.
+
+        i_datos-konwa = konp-konwa.
+        i_datos-kpein = konp-kpein.
+        i_datos-kmein     = konp-kmein.
+
+        i_datos-datbi = i_a005-datbi.
+        i_datos-datab = i_a005-datab.
+* modif NC - 21/09/2023
+        i_datos-kzust = konh-kzust.
+        i_datos-linea1 = konh-linea1.
+        i_datos-linea2 = konh-linea2.
+* fin modif
+        i_datos-erdat     = konh-erdat.
+        i_datos-ernam     = konh-ernam.
+* ABG 420909 30.05.2016
+        SELECT SINGLE name_textc FROM user_addr INTO i_datos-name_text WHERE bname = konh-ernam.
+* ABG 420909 30.05.2016
+        SELECT SINGLE prgrp INTO i_datos-prgrp FROM pgmi
+         WHERE werks = i_datos-vkorg
+           AND nrmit = i_datos-matnr.
+***INICIO PMA 12.03.2008: Recojemos tambien las condiciones de precio ZC01,ZC02...,
+*  cuando sea ZPCO.
+        IF konp-kschl = 'ZPCO'.
+          CLEAR: i_datos-zc01, i_datos-zc02, i_datos-zc03, i_datos-zc04,
+                 i_datos-zc05, i_datos-zc06, i_datos-zc07.
+          SELECT *
+              FROM konp
+              WHERE knumh = i_a005-knumh
+                AND kschl <> 'ZPCO'
+                AND loevm_ko <> 'X'.
+            CASE konp-kschl.
+              WHEN 'ZC01'.
+                i_datos-zc01 = konp-kbetr.
+              WHEN 'ZC02'.
+                i_datos-zc02 = konp-kbetr.
+              WHEN 'ZC03'.
+                i_datos-zc03 = konp-kbetr.
+              WHEN 'ZC04'.
+                i_datos-zc04 = konp-kbetr.
+              WHEN 'ZC05'.
+                i_datos-zc05 = konp-kbetr.
+              WHEN 'ZC06'.
+                i_datos-zc06 = konp-kbetr.
+              WHEN 'ZC07'.
+                i_datos-zc07 = konp-kbetr.
+            ENDCASE.
+          ENDSELECT.
+        ENDIF.
+***FIN PMA 12.03.2008
+
+        APPEND i_datos.
+        CLEAR i_datos.
+
+* Modificación RAFA (30.01.2001)
+      ENDIF.
+* FIN modificación RAFA (30.01.2001)
+
+    ENDLOOP.
+
+  ENDIF.
+
+
+* OPCION 2: Listado de evolución de precios
+  IF NOT p_op2 IS INITIAL.
+
+* Si no ha introducido Fecha Hasta en la pantalla, se asume 31/12/9999
+    IF s_datab-high = '00000000'.
+      s_datab-high = '99991231'.
+    ENDIF.
+
+* Inicio ASM 4.12.2000
+** Lee las organizaciones de venta/clientes/materiales/condiciones
+** seleccionadas por pantalla y vigente durante el periodo seleccionado
+*    SELECT * FROM A005 INTO TABLE I_A005
+*                     WHERE VKORG IN S_VKORG
+*                     AND   KUNNR IN S_KUNNR
+*                     AND   MATNR IN S_MATNR
+*                     AND   KSCHL IN S_KSCHL
+*                     AND   DATAB <= S_DATAB-HIGH
+*                     AND   DATBI >= S_DATAB-LOW.
+    CLEAR: i_kschl, i_a005.
+    REFRESH i_a005.
+    LOOP AT i_kschl.
+*     Obtener las tablas a las que se deberá acceder para obtener el nº
+*     de reg. de condición, la secuencia de acceso y los campos clave de
+*     dichas tablas
+      PERFORM obtener_tablas USING  i_kschl-kschl.
+      PERFORM obtener_datos_tablas.
+    ENDLOOP.
+* Fin ASM 04.12.2000
+
+    SORT i_a005 BY vkorg kunnr matnr datab kschl.
+
+    CLEAR i_a005.
+    LOOP AT i_a005.
+
+* Esta dentro de obtener_datos_tablas. 07.02.2005
+** Modificación RAFA (30.01.2001)
+*      IF ( I_A005-DATAB <= S_DATAB-HIGH ) AND
+*         ( I_A005-DATBI >= S_DATAB-LOW ) AND
+*         ( I_A005-KSCHL IN S_KSCHL )     AND
+*         ( I_A005-KSCHL <> 'GRWR' ).
+** FIN modificación RAFA (30.01.2001)
+* Fin 07.02.2005
+
+      CLEAR: kna1, knmt, konp, makt,
+             mbew, konh, mara.
+
+* Recupera el nombre del cliente
+      SELECT SINGLE * FROM kna1
+                   WHERE kunnr = i_a005-kunnr.
+
+* Recupera la referencia del cliente
+      SELECT SINGLE * FROM knmt
+               WHERE vkorg = i_a005-vkorg
+                     AND   kunnr = i_a005-kunnr
+                     AND   matnr = i_a005-matnr.
+***INICIO PMA 26.02.2008: Petición de desarrollo de Nacho cano para grupo
+*  de Trabajo "Precios". Cuando no exista el campo KNMT-KMDAT se obtendrá
+*  de la tabla VBAP.
+      IF sy-subrc <> 0. "buscamos la ref. cliente planes de entrega
+        SELECT *
+          FROM vapma
+          WHERE matnr = i_a005-matnr " Componente de la lista de Materiales
+            AND vkorg = i_a005-vkorg " Parámetro de selección
+            AND trvog = '3'     " Planes de entrega
+            AND kunnr = i_a005-kunnr " El cliente -> viene de VLPKM-KUNNR
+*              AND abgru ne '70' " No existe el campo abgru en la tabla vlpma
+            .
+          SELECT SINGLE kdmat
+          FROM vbap INTO knmt-kdmat
+          WHERE vbeln = vapma-vbeln
+            AND posnr = vapma-posnr
+            AND abgru NE '70' .
+        ENDSELECT.
+      ENDIF.
+***FIN PMA 26.02.2008
+
+* Recupera la descripción del material
+      SELECT SINGLE * FROM makt
+                WHERE matnr = i_a005-matnr
+                AND spras = sy-langu.
+
+* Recupera el precio estándar
+      IF s_werks IS INITIAL.
+        SELECT SINGLE * FROM mbew
+                 WHERE matnr = i_a005-matnr
+                 AND   bwkey = i_a005-vkorg.
+      ELSE.
+        SELECT SINGLE * FROM mbew
+                 WHERE matnr = i_a005-matnr
+                 AND   bwkey IN s_werks.
+      ENDIF.
+
+* Recupera el precio
+      SELECT SINGLE * FROM konp
+               WHERE knumh = i_a005-knumh.
+
+** INI MDRP - JIRA-150, si la moneda de la sociedad es distinta a la del maestro de precio
+*             hacemos la conversion del precio estandar a la moneda del maestro de precio
+
+* 1. comprobamos la moneda de la sociedad y del maestro de precio
+**  moneda del centro.
+      DATA: moneda_centro TYPE waers.
+      DATA: d_tipo_cambio_mp TYPE ukurs_curr.
+      DATA: p_estand_mp TYPE mbew-stprs."precio convertido a monenda del maestro precio
+
+      SELECT waers FROM t001
+       INTO moneda_centro
+       WHERE bukrs IN s_vkorg.
+      ENDSELECT.
+      IF moneda_centro <> konp-konwa. "monedas diferentes
+
+        CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+          EXPORTING
+            date             = sy-datum
+            foreign_amount   = mbew-stprs
+            foreign_currency = moneda_centro
+            local_currency   = konp-konwa
+            type_of_rate     = 'M'
+          IMPORTING
+            exchange_rate    = d_tipo_cambio_mp
+            local_amount     = p_estand_mp
+          EXCEPTIONS
+            no_rate_found    = 1
+            overflow         = 2
+            no_factors_found = 3
+            no_spread_found  = 4
+            OTHERS           = 5.
+*      IF sy-subrc <> 0.
+*        i_tabl-kbetrc = i_tabl-kbetr.
+*      ELSE.
+*        i_tabl-konwac = zmt001w-waers.
+*        i_tabl-rate = d_tipo_cambio.
+*      ENDIF.
+        IF sy-subrc = 0.
+          i_datos-stprs = p_estand_mp.
+        ENDIF.
+      ENDIF.
+
+** END MDRP - JIRA-150
+
+* Recupera el motivo del cambio de precio
+      SELECT SINGLE * FROM konh
+               WHERE knumh = i_a005-knumh.
+      CHECK konp-loevm_ko <> 'X'.  "Sin marca borrado.
+
+* Unidad de medida base
+      SELECT SINGLE meins FROM mara INTO mara-meins
+             WHERE matnr = i_a005-matnr.
+
+* Modificacio GAI6 14.08.2002
+* Chequeo quitar Obsoletos. "de momento el centro como la
+* organizacion de ventas.
+      IF p_obso = 'X'.
+        IF s_werks IS INITIAL.
+          SELECT SINGLE * FROM marc WHERE matnr = i_a005-matnr
+                                    AND   werks = i_a005-vkorg
+                                    AND   mmsta = c_zt.
+        ELSE.
+          SELECT SINGLE * FROM marc WHERE matnr = i_a005-matnr
+                                    AND   werks = s_werks
+                                    AND   mmsta = c_zt.
+        ENDIF.
+        IF sy-subrc = 0. "esta obsoleto saltamos la carga de datos.
+          CONTINUE.
+        ENDIF.
+      ENDIF.
+* Fin modifcacion GAI6 14.08.2002
+
+* Almacenar los datos en la tabla I_DATOS
+      i_datos-vkorg = i_a005-vkorg.
+      i_datos-kunnr = i_a005-kunnr.
+      i_datos-inco1 = i_a005-inco1.
+      i_datos-name1 = kna1-name1.
+      i_datos-matnr = i_a005-matnr.
+      i_datos-maktx = makt-maktx.
+      i_datos-kdmat = knmt-kdmat.
+      IF moneda_centro <> konp-konwa.    " INI MDRP - JIRA-150 precio convertido a monenda del maestro precio
+        i_datos-stprs = p_estand_mp.
+      ELSE.
+        i_datos-stprs = mbew-stprs.
+      ENDIF.                             " FIN MDRP - JIRA-150
+      i_datos-kschl = i_a005-kschl.
+* Modif NC - 25/04/2024 OJO PRECIO PARA MONEDAS JPN y VTN
+
+      IF konp-konwa IS NOT INITIAL.  "ojo si la moneda es YEN o parecida.
+
+*          DATA: ld_amount_ext LIKE  bapicurr-bapicurr,
+*                ld_amount_sap TYPE bp_wjl.
+*          ld_sap_code   TYPE tcurc-waers.
+
+        ld_amount_sap = konp-kbetr.
+*    ld_sap_code = konp-konwa.
+
+        CALL FUNCTION 'AIA_TOOL_CURRENCY_SAP_TO_EXTER'
+          EXPORTING
+            i_amount_sap = ld_amount_sap
+            i_sap_code   = konp-konwa
+          IMPORTING
+            e_amount_ext = ld_amount_ext.
+
+        konp-kbetr = ld_amount_ext.
+
+      ENDIF.
+
+      i_datos-kbetr = konp-kbetr.
+
+
+      i_datos-konwa = konp-konwa.
+      i_datos-kpein = konp-kpein.
+      i_datos-datbi = i_a005-datbi.
+      i_datos-datab = i_a005-datab.
+      i_datos-kzust = konh-kzust.
+      i_datos-linea1 = konh-linea1.
+      i_datos-linea2 = konh-linea2.
+      i_datos-erdat     = konh-erdat.   "191117 - añadir KHON-ERDAT
+      i_datos-ernam     = konh-ernam.   "191117 - añadir KHON-ERNAM^
+* ABG 420909 30.05.2016
+      SELECT SINGLE name_textc FROM user_addr INTO i_datos-name_text WHERE bname = konh-ernam.
+* ABG 420909 30.05.2016
+      i_datos-kmein     = konp-kmein.
+      i_datos-meins     = mara-meins.
+      i_datos-peinh     = mbew-peinh.
+      i_datos-dif   =  i_datos-kbetr - i_datos-stprs.
+      SELECT SINGLE prgrp INTO i_datos-prgrp FROM pgmi
+              WHERE werks = i_datos-vkorg
+                AND nrmit = i_datos-matnr.
+***INICIO PMA 12.03.2008: Recojemos tambien las condiciones de precio ZC01,ZC02...,
+*  cuando sea ZPCO.
+      IF konp-kschl = 'ZPCO'.
+        CLEAR: i_datos-zc01, i_datos-zc02, i_datos-zc03, i_datos-zc04,
+               i_datos-zc05, i_datos-zc06, i_datos-zc07.
+        SELECT *
+            FROM konp
+            WHERE knumh = i_a005-knumh
+              AND kschl <> 'ZPCO'
+              AND loevm_ko <> 'X'.
+          CASE konp-kschl.
+            WHEN 'ZC01'.
+              i_datos-zc01 = konp-kbetr.
+            WHEN 'ZC02'.
+              i_datos-zc02 = konp-kbetr.
+            WHEN 'ZC03'.
+              i_datos-zc03 = konp-kbetr.
+            WHEN 'ZC04'.
+              i_datos-zc04 = konp-kbetr.
+            WHEN 'ZC05'.
+              i_datos-zc05 = konp-kbetr.
+            WHEN 'ZC06'.
+              i_datos-zc06 = konp-kbetr.
+            WHEN 'ZC07'.
+              i_datos-zc07 = konp-kbetr.
+          ENDCASE.
+        ENDSELECT.
+      ENDIF.
+***FIN PMA 12.03.2008
+
+      APPEND i_datos.
+      CLEAR i_datos.
+
+** Modificación RAFA (30.01.2001)
+*     ENDIF.
+** FIN modificación RAFA (30.01.2001)
+
+    ENDLOOP.
+
+  ENDIF.
+
+* PS 200801 Filtramos por s_kschl si esta relleno.
+  IF NOT s_erdat-low IS INITIAL.
+    DELETE i_datos WHERE erdat NOT IN s_erdat.
+  ENDIF.
+* PS 200801.
+
+ENDFORM.                    "OBTENER_DATOS
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA_LISTADO
+*&---------------------------------------------------------------------*
+* Se escribe la cabecera del listado
+*----------------------------------------------------------------------*
+FORM cabecera_listado.
+
+  IF NOT p_op1 IS INITIAL.
+    WRITE: AT  1 TEXT-001.
+  ELSE.
+    WRITE: AT  1 TEXT-016.
+  ENDIF.
+
+  WRITE: AT 200 TEXT-002,
+         AT 210 sy-datum.
+  WRITE: AT 225 TEXT-003,
+         AT 235 sy-pagno.
+
+ENDFORM.                    "CABECERA_LISTADO
+*&---------------------------------------------------------------------*
+*&      Form  CRITERIOS_SELECCION
+*&---------------------------------------------------------------------*
+* Se escriben los datos de la pantalla de selección
+*----------------------------------------------------------------------*
+FORM criterios_seleccion.
+
+  ULINE.
+  SKIP.
+
+  WRITE : /2 TEXT-004,                 " Organización de Ventas
+          30 i_datos-vkorg,
+          80 TEXT-005,                 " Fecha del precio
+         100 s_datab-low.
+
+* OPCION 2: Listado de evolución de precios (se escribe la fecha hasta)
+  IF NOT p_op2 IS INITIAL.
+    WRITE : 112 TEXT-011,              " Fecha hasta del precio
+            115 s_datab-high.
+  ENDIF.
+
+  SKIP.
+
+  WRITE : /2 TEXT-006,                                      " Cliente
+          15 d_name1.
+
+ENDFORM.                    "CRITERIOS_SELECCION
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA_LINEAS_DETALLE
+*&---------------------------------------------------------------------*
+* Se escribe las cabeceras de las líneas de detalle
+*----------------------------------------------------------------------*
+FORM cabecera_lineas_detalle.
+
+  ULINE.
+  FORMAT COLOR  COL_HEADING INTENSIFIED ON.
+
+* OPCION 1: Listado de precios con desglose de condiciones
+  IF NOT p_op1 IS INITIAL.
+
+    WRITE: /2 TEXT-007 CENTERED,       " Material
+           22 TEXT-008 LEFT-JUSTIFIED, " Denominación
+           65 TEXT-009 LEFT-JUSTIFIED. " Ref. Cliente
+
+    d_pos = 90.
+    d_cont = 1.
+
+    LOOP AT i_kschl WHERE kschl <> 'GRWR'
+                    AND   kschl <> 'VPRS'.
+      SELECT SINGLE * FROM t685t
+         WHERE spras = sy-langu
+         AND   kappl = 'V'
+         AND   kschl = i_kschl-kschl.
+      IF d_cont = 1.  " Tras la primera condición se escribe la moneda
+        WRITE: AT d_pos t685t-vtext RIGHT-JUSTIFIED,
+                   113 TEXT-018 CENTERED,        " Moneda
+                   119 TEXT-019 RIGHT-JUSTIFIED. " Cantidad base
+        d_pos = 125.
+      ELSE.
+        IF d_cont < 7.               " 6 condiciones por línea
+          WRITE AT d_pos t685t-vtext RIGHT-JUSTIFIED.
+          d_pos = d_pos + 22.
+        ENDIF.
+      ENDIF.
+      d_cont = d_cont + 1.
+    ENDLOOP.
+
+    WRITE AT 250 TEXT-020.
+
+    ULINE.
+
+  ENDIF.
+
+* OPCION 2: Listado de evolución de precios
+  IF NOT p_op2 IS INITIAL.
+
+    WRITE: /2 TEXT-007 CENTERED,       " Material
+           22 TEXT-008 LEFT-JUSTIFIED, " Denominación
+           65 TEXT-009 LEFT-JUSTIFIED, " Ref. Cliente
+           85 TEXT-023 LEFT-JUSTIFIED, " Precio estándar
+          105 TEXT-012 LEFT-JUSTIFIED, " Condición
+          144 TEXT-013 LEFT-JUSTIFIED, " Valor
+          152 TEXT-018 CENTERED,       " Moneda
+          159 TEXT-019 RIGHT-JUSTIFIED," Cantidad base
+          165 TEXT-014 CENTERED,       " Desde fecha
+          180 TEXT-015 CENTERED,       " Hasta fecha
+          195 TEXT-021 LEFT-JUSTIFIED, " Motivo Modificación
+          227 TEXT-022 RIGHT-JUSTIFIED, " % Modificación
+          240 TEXT-024 RIGHT-JUSTIFIED. " % Modificación
+
+    ULINE.
+
+  ENDIF.
+
+  FORMAT RESET.
+
+ENDFORM.                               " CABECERA_LINEAS_DETALLE
+
+*&---------------------------------------------------------------------*
+*&      Form  ESCRIBIR_LINEA
+*&---------------------------------------------------------------------*
+* Escribe la línea de detalle
+*----------------------------------------------------------------------*
+FORM escribir_linea.
+*  DATA lr_datos LIKE i_datos.
+
+* OPCION 1: Listado de precios con desglose de condiciones
+  IF NOT p_op1 IS INITIAL.
+
+    d_flag = ''.
+    IF list = 'X'.
+      WRITE: /2 d_matnr,
+             22 d_maktx,
+             65 d_kdmat.
+    ELSE.
+      MOVE d_vkorg TO i_tabl-vkorg.
+      MOVE d_kunnr TO i_tabl-kunnr.
+      MOVE d_name1 TO i_tabl-name1.
+      MOVE d_matnr TO i_tabl-matnr.
+      MOVE d_maktx TO i_tabl-maktx.
+      MOVE d_kdmat TO i_tabl-kdmat.
+*      move d_kschl to i_tabl-kschl.
+    ENDIF.
+
+* INI CSDPASAPD-1234
+** Añadimos 3 nuevos campos: DATBI, DATAB, KMEIN
+*    DATA: ls_a005 LIKE LINE OF i_a005.
+*    READ TABLE i_a005 WITH KEY matnr = d_matnr
+*                        TRANSPORTING NO FIELDS.
+*    IF sy-subrc = 0.
+*      ls_a005 = i_a005[ sy-tabix ].
+*      MOVE ls_a005-datab TO i_tabl-datab.
+*      MOVE ls_a005-datbi TO i_tabl-datbi.
+*
+*      SELECT SINGLE kmein
+*        FROM konp INTO @DATA(lv_kmein)
+*        WHERE knumh  = @ls_a005-knumh.
+*
+*      IF sy-subrc = 0.
+*        MOVE lv_kmein TO i_tabl-kmein.
+*        CLEAR lv_kmein.
+*      ENDIF.
+*    ENDIF.
+* FIN CSDPASAPD-1234
+
+    d_pos = 95.
+
+    CLEAR i_kbetr.
+    LOOP AT i_kbetr.
+      IF sy-tabix = 1.  " Tras la primera condición se escribe la moneda
+        IF list = 'X'.
+          WRITE: AT d_pos i_kbetr-kbetr RIGHT-JUSTIFIED,
+                     113  d_konwa,                       " Moneda
+                     118  d_kpein.                       " Cantidad base
+        ELSE.
+          MOVE i_kbetr-kbetr TO i_tabl-kbetr.
+          MOVE d_konwa TO i_tabl-konwa.
+          MOVE d_kpein TO i_tabl-kpein.
+          MOVE i_kbetr-kschl TO i_tabl-kschl.
+          MOVE i_kbetr-inco1 TO i_tabl-inco1.
+        ENDIF.
+        d_pos = 130.
+      ELSE.
+        d_resto = ( sy-tabix MOD 6 ).
+        IF d_resto = 0.                " Caben 6 condiciones por línea.
+          IF list = 'X'.
+            WRITE AT d_pos i_kbetr-kbetr RIGHT-JUSTIFIED.
+            SKIP.
+          ELSE.
+            MOVE i_kbetr-kbetr TO i_tabl-kbetr.
+            MOVE i_kbetr-kschl TO i_tabl-kschl.
+            MOVE i_kbetr-inco1 TO i_tabl-inco1.
+          ENDIF.
+          d_pos = 22.
+          d_flag = 'X'.
+        ELSE.
+          IF d_flag = 'X'.
+            IF list = 'X'.
+              WRITE AT d_pos i_kbetr-vtext.
+              d_pos = d_pos + 22.
+              WRITE AT d_pos i_kbetr-kbetr RIGHT-JUSTIFIED.
+              d_pos = d_pos + 22.
+            ELSE.
+              MOVE i_kbetr-vtext TO i_tabl-vtextc.
+              MOVE i_kbetr-kbetr TO i_tabl-kbetr.
+              MOVE i_kbetr-kschl TO i_tabl-kschl.
+              MOVE i_kbetr-inco1 TO i_tabl-inco1.
+
+            ENDIF.
+          ELSE.
+            IF list = 'X'.
+              WRITE AT d_pos i_kbetr-kbetr RIGHT-JUSTIFIED.
+            ELSE.
+              MOVE i_kbetr-kbetr TO i_tabl-kbetr.
+              MOVE i_kbetr-kschl TO i_tabl-kschl.
+              MOVE i_kbetr-inco1 TO i_tabl-inco1.
+
+            ENDIF.
+            d_pos = d_pos + 22.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+***INICIO PMA 12.03.2008: Recojemos tambien las condiciones de precio ZC01,ZC02...,
+*  cuando sea ZPCO.
+      IF i_tabl-kschl = 'ZPCO'.
+        MOVE lr_datos-zc01 TO i_tabl-zc01.
+        MOVE lr_datos-zc02 TO i_tabl-zc02.
+        MOVE lr_datos-zc03 TO i_tabl-zc03.
+        MOVE lr_datos-zc04 TO i_tabl-zc04.
+        MOVE lr_datos-zc05 TO i_tabl-zc05.
+        MOVE lr_datos-zc06 TO i_tabl-zc06.
+        MOVE lr_datos-zc07 TO i_tabl-zc07.
+      ELSE.
+        CLEAR: i_tabl-zc01, i_tabl-zc02, i_tabl-zc03, i_tabl-zc04,
+               i_tabl-zc05, i_tabl-zc06, i_tabl-zc07.
+      ENDIF.
+***FIN PMA 12.03.2008
+
+****Inicio modif 191117 - S.fernandez - Añdir la columna fecha y nombre (KHON-ERDAT)
+      IF list <> 'X'.
+* modif nc 21/09/2023
+        MOVE i_datos-kzust TO i_tabl-kzust.
+        MOVE i_datos-linea1 TO i_tabl-linea1.
+        MOVE i_datos-linea2 TO i_tabl-linea2.
+* fin modif NC -21/09/2023
+        MOVE i_datos-erdat TO i_tabl-erdat.                 " PS191117
+        MOVE i_datos-ernam TO i_tabl-ernam.
+* modif nc_04/11/2024
+        MOVE i_datos-datab TO i_tabl-datab.
+        MOVE i_datos-datbi TO i_tabl-datbi.
+        MOVE i_datos-kmein TO i_tabl-kmein.
+                                                            " PS191117
+      ENDIF.
+* ABG 30.05.2016
+      MOVE i_datos-name_text TO i_tabl-name_text.
+* ABG 30.05.2016
+
+****Fin modif 191117.
+
+      APPEND i_tabl.
+    ENDLOOP.
+    IF list = 'X'.
+      WRITE AT 253 d_error.
+    ENDIF.
+  ENDIF.
+
+* OPCION 2: Listado de evolución de precios
+  IF NOT p_op2 IS INITIAL.
+
+** INI CSDPASAPD-1234
+** Añadimos 3 nuevos campos: DATBI, DATAB, KMEIN
+*    DATA: ls_a005_2 LIKE LINE OF i_a005.
+*    READ TABLE i_a005 WITH KEY matnr = i_datos-matnr
+*                        TRANSPORTING NO FIELDS.
+*    IF sy-subrc = 0.
+*      ls_a005_2 = i_a005[ sy-tabix ].
+*      MOVE ls_a005_2-datab TO i_tabl-datab.
+*      MOVE ls_a005_2-datbi TO i_tabl-datbi.
+*
+*      SELECT SINGLE kmein
+*        FROM konp INTO @DATA(lv_kmein_2)
+*        WHERE knumh  = @ls_a005_2-knumh.
+*
+*      IF sy-subrc = 0.
+*        MOVE lv_kmein_2 TO i_tabl-kmein.
+*        CLEAR lv_kmein_2.
+*      ENDIF.
+*    ENDIF.
+** FIN CSDPASAPD-1234
+
+* Recupera la descripción de la condición
+    SELECT SINGLE * FROM t685t
+           WHERE spras = sy-langu
+           AND   kappl = 'V'
+           AND   kschl = i_datos-kschl.
+
+*   Cuando escribe el precio PR00, calcula la variación respecto
+*   del precio estándar
+
+    i_datos-porcentaj1 = 0.
+    IF i_datos-kschl = 'PR00'.
+      IF i_datos-kmein = i_datos-meins AND
+         i_datos-konwa = i_vkorg-waers.
+        IF i_datos-stprs  <> 0 AND i_datos-kpein <> 0
+                                   AND i_datos-peinh <> 0.
+          i_datos-porcentaj1 =
+          ( ( ( i_datos-kbetr / i_datos-kpein ) -
+              ( i_datos-stprs / i_datos-peinh ) )
+            / ( i_datos-stprs / i_datos-peinh ) ) * 100.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+*   Si hay cambio de precio
+    IF i_datos-kzust <> ''.
+      IF d_kbetr <> 0 AND i_datos-kpein <> 0.
+        i_datos-porcentaje =
+        ( ( ( i_datos-kbetr / i_datos-kpein )
+          - d_kbetr )
+          / d_kbetr ) * 100.
+      ENDIF.
+      IF i_datos-kpein <> 0.
+        d_kbetr = i_datos-kbetr / i_datos-kpein.
+      ENDIF.
+    ELSE.
+      i_datos-porcentaje = 0.
+    ENDIF.
+
+* Recupera la descripción del motivo de cambio
+    SELECT SINGLE * FROM t686d
+             WHERE spras = sy-langu
+             AND   kzust = i_datos-kzust.
+    IF sy-subrc <> 0.
+      t686d-vtext = ''.
+    ENDIF.
+
+    IF list = 'X'.
+      WRITE: /2 i_datos-matnr,       " Material
+             22 i_datos-maktx,       " Denominación
+             65 i_datos-kdmat.       " Ref. Cliente
+    ELSE.
+      MOVE i_datos-vkorg TO i_tabl-vkorg.
+      MOVE i_datos-kunnr TO i_tabl-kunnr.
+      MOVE i_datos-inco1 TO i_tabl-inco1.
+      MOVE i_datos-name1 TO i_tabl-name1.
+      MOVE i_datos-matnr TO i_tabl-matnr.
+      MOVE i_datos-maktx TO i_tabl-maktx.
+      MOVE i_datos-kdmat TO i_tabl-kdmat.
+* modif nc_04/11/2024
+      MOVE i_datos-datab TO i_tabl-datab.
+      MOVE i_datos-datbi TO i_tabl-datbi.
+      MOVE i_datos-kmein TO i_tabl-kmein.
+
+    ENDIF.
+
+*Se imprime precio estándar por 1000 unidades.
+*Este precio está con la moneda de la sociedad.
+    IF i_datos-peinh <> 0 AND i_datos-peinh <> 1000.
+      i_datos-stprs = i_datos-stprs * 1000
+                        / i_datos-peinh.
+    ENDIF.
+
+    IF list = 'X'.
+      IF i_datos-stprs <> 0.
+        WRITE: 85 i_datos-stprs.       " Precio estándar
+      ENDIF.
+    ELSE.
+      MOVE i_datos-stprs TO i_tabl-stprs.
+      MOVE i_datos-dif TO i_tabl-dif.
+    ENDIF.
+
+    IF list = 'X'.
+      WRITE: 105 t685t-vtext,             " Condición
+            134 i_datos-kbetr,       " Valor
+            153 i_datos-konwa,       " Moneda
+            158 i_datos-kpein,       " Cantidad base
+            165 i_datos-datab,       " Desde fecha
+            180 i_datos-datbi,       " Hasta fecha
+            195 i_datos-kzust,       " Motivo
+            198 t686d-vtext.             " Descripción del motivo
+    ELSE.
+      MOVE t685t-vtext TO i_tabl-vtextc.
+      MOVE i_datos-kbetr TO i_tabl-kbetr.
+      MOVE i_datos-konwa TO i_tabl-konwa.
+      MOVE i_datos-kpein TO i_tabl-kpein.
+      MOVE i_datos-datab TO i_tabl-datab.
+      MOVE i_datos-datbi TO i_tabl-datbi.
+      MOVE i_datos-kzust TO i_tabl-kzust.
+      MOVE i_datos-linea1 TO i_tabl-linea1.
+      MOVE i_datos-linea2 TO i_tabl-linea2.
+      MOVE i_datos-prgrp TO i_tabl-prgrp.
+      MOVE t686d-vtext TO i_tabl-vtextm.
+      MOVE i_datos-kschl TO i_tabl-kschl.
+
+      MOVE i_datos-kmein TO i_tabl-kmein.
+
+
+    ENDIF.
+
+    IF list = 'X'.
+      IF i_datos-porcentaje <> 0.
+        WRITE: 220 i_datos-porcentaje.  " Porcentaje
+      ENDIF.
+    ELSE.
+      MOVE i_datos-porcentaje TO i_tabl-porcentaje.
+    ENDIF.
+
+    IF list = 'X'.
+      IF i_datos-porcentaj1 <> 0.
+        WRITE: 237 i_datos-porcentaj1.  " Variación s/precio estándar
+      ENDIF.
+    ELSE.
+      MOVE i_datos-porcentaj1 TO i_tabl-porcentaj1.
+    ENDIF.
+
+***INICIO PMA 12.03.2008: Recojemos tambien las condiciones de precio ZC01,ZC02...,
+*  cuando sea ZPCO.
+    IF i_tabl-kschl = 'ZPCO'.
+      MOVE lr_datos-zc01 TO i_tabl-zc01.
+      MOVE lr_datos-zc02 TO i_tabl-zc02.
+      MOVE lr_datos-zc03 TO i_tabl-zc03.
+      MOVE lr_datos-zc04 TO i_tabl-zc04.
+      MOVE lr_datos-zc05 TO i_tabl-zc05.
+      MOVE lr_datos-zc06 TO i_tabl-zc06.
+      MOVE lr_datos-zc07 TO i_tabl-zc07.
+    ELSE.
+      CLEAR: i_tabl-zc01, i_tabl-zc02, i_tabl-zc03, i_tabl-zc04,
+             i_tabl-zc05, i_tabl-zc06, i_tabl-zc07.
+    ENDIF.
+***FIN PMA 12.03.2008
+****Inicio modif 191117 - S.fernandez - Añdir la columna fecha y nombre (KHON-ERDAT)
+*    IF list <> 'X'. " ABG Inc 23810 Que salgan estos campos tambien cuando seleccionen list
+    MOVE i_datos-erdat TO i_tabl-erdat.                     " PS191117
+    MOVE i_datos-ernam TO i_tabl-ernam.                     " PS191117
+*    ENDIF. " Fin Inc 23810
+
+* ABG 30.05.2016
+    MOVE i_datos-name_text TO i_tabl-name_text.
+* ABG 30.05.2016
+****Fin modif 191117.
+
+    APPEND i_tabl.
+  ENDIF.
+
+  REFRESH i_kbetr.
+
+ENDFORM.                    "ESCRIBIR_LINEA
+*&---------------------------------------------------------------------*
+*&      Form  CARGA_PRECIOS
+*&---------------------------------------------------------------------*
+*       Carga los precios de las distintas condiciones sobre i_kbetr
+*----------------------------------------------------------------------*
+FORM carga_precios.
+
+*  IF i_datos-kschl = 'ZPCO'.
+  lr_datos = i_datos.
+*  ELSE.
+*    CLEAR lr_datos.
+*   ENDIF.
+
+  d_maktx = i_datos-maktx.
+  d_kdmat = i_datos-kdmat.
+
+  CLEAR i_kschl.
+  LOOP AT i_kschl.
+    IF i_kschl-kschl = i_datos-kschl.
+      SELECT SINGLE * FROM t685t
+         WHERE spras = sy-langu
+         AND   kappl = 'V'
+         AND   kschl = i_datos-kschl.
+      i_kbetr-vtext = t685t-vtext.
+      i_kbetr-kbetr = i_datos-kbetr.
+      i_kbetr-kschl = i_datos-kschl.
+      i_kbetr-inco1 = i_datos-inco1.
+      APPEND i_kbetr.
+      CLEAR i_kbetr.
+*      EXIT.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.                               " CARGA_PRECIOS
+*&---------------------------------------------------------------------*
+*&      Form  VKORG_CHEQUEO
+*&---------------------------------------------------------------------*
+*       Chequeo de Organización de ventas
+*----------------------------------------------------------------------*
+*      -->S_VKORG  Organización de ventas
+*----------------------------------------------------------------------*
+FORM vkorg_chequeo USING tvko-vkorg.
+
+*  AUTHORITY-CHECK OBJECT 'Z_SD_VKORG'
+*    ID 'VKORG' FIELD tvko-vkorg.
+*
+** Error si el usuario no tiene autorización para la sociedad
+*  IF sy-subrc <> 0.
+*    MESSAGE e514(vf) WITH tvko-vkorg.
+*  ENDIF.
+*
+ENDFORM.                               " VKORG_CHEQUEO
+
+*&---------------------------------------------------------------------*
+*&      Form  OBTENER_TABLAS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->PE_KSCHL                                                     *
+*----------------------------------------------------------------------*
+FORM obtener_tablas USING    pe_kschl.
+
+  CLEAR i_tabla.
+  REFRESH i_tabla.
+
+  CLEAR t685.
+  SELECT SINGLE kozgf FROM t685
+                      INTO t685-kozgf
+                     WHERE kvewe = c_kvewe_a
+                       AND kappl = c_kappl_v
+                       AND kschl = pe_kschl.
+
+* Obtener el nombre de las tablas a acceder y la secuencia de acceso a
+* las mismas
+  CLEAR t682i.
+  SELECT kolnr kotabnr FROM t682i
+                       INTO (t682i-kolnr,
+                             t682i-kotabnr)
+          WHERE kvewe = c_kvewe_a
+            AND kappl = c_kappl_v
+            AND kozgf = t685-kozgf
+          ORDER BY kolnr.
+*   Para cada tabla, obtener los campos clave
+    CLEAR t682z.
+    SELECT * FROM t682z
+            WHERE kvewe = c_kvewe_a
+              AND kappl = c_kappl_v
+              AND kozgf = t685-kozgf
+              AND kolnr = t682i-kolnr.
+
+      i_tabla-kolnr = t682i-kolnr.
+      CONCATENATE 'A' t682i-kotabnr INTO i_tabla-kotabnr.
+      i_tabla-zifna = t682z-zifna.
+
+      APPEND i_tabla.
+      CLEAR i_tabla.
+    ENDSELECT.
+  ENDSELECT.
+
+ENDFORM.                    " OBTENER_TABLAS
+
+*&---------------------------------------------------------------------*
+*&      Form  OBTENER_DATOS_TABLAS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM obtener_datos_tablas.
+
+  DATA: zzd_ok(1).
+
+  DATA: i_auxa005 LIKE i_a005 OCCURS 100 WITH HEADER LINE.
+
+  i_tabla2[] = i_tabla[].
+
+  CLEAR i_tabla.
+  LOOP AT i_tabla.
+    AT NEW kotabnr.
+      CLEAR i_tab.
+      REFRESH i_tab.
+      CLEAR d_and.
+    ENDAT.
+    AT END OF kotabnr.
+      CLEAR s_vkorg.
+      READ TABLE i_tabla2 WITH KEY kotabnr = i_tabla-kotabnr
+                                   zifna = 'VKORG'.
+      IF sy-subrc = 0.
+        LOOP AT s_vkorg.
+          AT FIRST.
+            i_tab = '('.
+            APPEND i_tab.
+            CLEAR d_or.
+          ENDAT.
+          PERFORM obtener_condiciones USING s_vkorg-low
+                                            s_vkorg-high
+                                            s_vkorg-option
+                                            'VKORG'.
+          AT LAST.
+            i_tab = ')'.
+            APPEND i_tab.
+          ENDAT.
+        ENDLOOP.
+        IF sy-subrc = 0.
+          d_and = 'AND'.
+        ENDIF.
+      ENDIF.
+
+      READ TABLE i_tabla2 WITH KEY kotabnr = i_tabla-kotabnr
+                                   zifna = 'KUNNR'.
+      IF sy-subrc = 0.
+        CLEAR s_kunnr.
+        LOOP AT s_kunnr.
+          AT FIRST.
+            CONCATENATE d_and ' ( ' INTO i_tab SEPARATED BY space.
+            APPEND i_tab.
+            CLEAR d_or.
+          ENDAT.
+          PERFORM obtener_condiciones USING s_kunnr-low
+                                            s_kunnr-high
+                                            s_kunnr-option
+                                            'KUNNR'.
+          AT LAST.
+            i_tab = ')'.
+            APPEND i_tab.
+          ENDAT.
+        ENDLOOP.
+        IF sy-subrc = 0.
+          d_and = 'AND'.
+        ENDIF.
+      ENDIF.
+
+      READ TABLE i_tabla2 WITH KEY kotabnr = i_tabla-kotabnr
+                                   zifna = 'MATNR'.
+      IF sy-subrc = 0.
+        CLEAR s_matnr.
+        LOOP AT s_matnr.
+          AT FIRST.
+            CONCATENATE d_and ' ( ' INTO i_tab SEPARATED BY space.
+            APPEND i_tab.
+            CLEAR d_or.
+          ENDAT.
+          PERFORM obtener_condiciones USING s_matnr-low
+                                            s_matnr-high
+                                            s_matnr-option
+                                            'MATNR'.
+          AT LAST.
+            i_tab = ')'.
+            APPEND i_tab.
+          ENDAT.
+        ENDLOOP.
+        IF sy-subrc = 0.
+          d_and = 'AND'.
+        ENDIF.
+      ENDIF.
+
+      READ TABLE i_tabla2 WITH KEY kotabnr = i_tabla-kotabnr
+                                   zifna = 'DATAB'.
+      IF sy-subrc = 0.
+        CONCATENATE d_and
+          ' DATAB <= ''' s_datab-low '''' INTO i_tab.
+        APPEND i_tab.
+        d_and = 'AND'.
+      ENDIF.
+
+      READ TABLE i_tabla2 WITH KEY kotabnr = i_tabla-kotabnr
+                                   zifna = 'DATBI'.
+      IF sy-subrc = 0.
+        CONCATENATE d_and
+          ' DATBI >= ''' s_datab-low '''' INTO i_tab.
+        APPEND i_tab.
+        d_and = 'AND'.
+      ENDIF.
+
+      SELECT * FROM (i_tabla-kotabnr)
+                   APPENDING CORRESPONDING FIELDS OF TABLE i_auxa005
+                  WHERE kappl = c_kappl_v
+                    AND kschl = i_kschl-kschl
+                    AND (i_tab).
+      IF sy-subrc = 0.
+* Modif. C. Arés. - chequeamos que hay datos válidos a ese nivel
+* encontrado
+*        CLEAR ZZD_OK.
+*        CLEAR I_A005.
+        LOOP AT i_auxa005.
+* Miramos si tiene la marca de borrado.
+          SELECT SINGLE * FROM konp
+                   WHERE knumh = i_auxa005-knumh
+                     AND loevm_ko NE 'X'.
+          IF sy-subrc = 0.
+* Chequeamos precio a fecha valida o evolucion precios venta.
+* precio a fecha valida solo la fecha desde.
+
+            IF ( i_auxa005-datab <= s_datab-low ) AND "fec. desde
+                 ( i_auxa005-datbi >= s_datab-low ) AND "fec.hasta
+                 ( i_auxa005-kschl <> 'GRWR' ).
+* Si es OK, lo pasamos a la tabla I_A005.
+              i_a005 = i_auxa005.
+              APPEND i_a005.
+
+            ELSEIF p_op2 = 'X'.   "Precios evolucion precios.
+              IF ( ( i_auxa005-datab <= s_datab-high   "fec.desde
+                 AND i_auxa005-datbi >= s_datab-high  )  "fec.hasta
+                 OR ( i_auxa005-datab >= s_datab-low
+                     AND i_auxa005-datbi <= s_datab-high ) )
+                AND  ( i_auxa005-kschl <> 'GRWR' ).
+* Si es OK, lo pasamos a la tabla I_A005.
+                i_a005 = i_auxa005.
+                APPEND i_a005.
+*              ZZD_OK = 'X'.
+*              EXIT.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDLOOP.
+*        IF ZZD_OK = 'X'.
+*          EXIT.
+*        ELSE.
+        CLEAR i_auxa005.
+        REFRESH i_auxa005.
+*        ENDIF.
+      ENDIF.
+    ENDAT.
+  ENDLOOP.
+
+ENDFORM.                    " OBTENER_DATOS_TABLAS
+
+*&---------------------------------------------------------------------*
+*&      Form  OBTENER_CONDICIONES
+*&---------------------------------------------------------------------*
+*  Se obtienen las condiciones de selección
+*----------------------------------------------------------------------*
+*      -->PE_LOW                                                       *
+*      -->PE_HIGH                                                      *
+*      -->PE_OPTION                                                    *
+*      -->PE_TEXT                                                      *
+*----------------------------------------------------------------------*
+FORM obtener_condiciones USING    pe_low
+                                  pe_high
+                                  pe_option
+                                  pe_texto.
+
+  CASE pe_option.
+    WHEN 'BT'.
+      CONCATENATE pe_texto ' BETWEEN ''' pe_low ''' AND '''
+                         pe_high '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'NB'.
+      CONCATENATE pe_texto ' NOT BETWEEN ''' pe_low ''' AND '''
+                         pe_high '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'EQ'.
+      CONCATENATE pe_texto ' = ''' pe_low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'NE'.
+      CONCATENATE pe_texto ' <> ''' pe_low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'GE'.
+      CONCATENATE pe_texto ' >= ''' pe_low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'LE'.
+      CONCATENATE pe_texto ' <= ''' pe_low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'GT'.
+      CONCATENATE pe_texto ' > ''' pe_low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'LT'.
+      CONCATENATE pe_texto ' < ''' pe_low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'CP'.
+      TRANSLATE pe_low USING '*%'.
+      CONCATENATE pe_texto ' LIKE ''' pe_low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+    WHEN 'NP'.
+      TRANSLATE pe_low USING '*%'.
+      CONCATENATE pe_texto ' NOT LIKE ''' s_matnr-low '''' INTO i_tab.
+      CONCATENATE d_or i_tab INTO i_tab SEPARATED BY space.
+      d_or = 'OR '.
+      APPEND i_tab.
+  ENDCASE.
+
+ENDFORM.                    " OBTENER_CONDICIONES
+*&---------------------------------------------------------------------*
+*&      Form  cargar_centros
+*&---------------------------------------------------------------------*
+*       Carga los centros incluidos en la select-option (S_VKORG)
+*          en la tabla i_vkorg
+*----------------------------------------------------------------------*
+FORM cargar_organizaciones.
+
+  SELECT * FROM tvko WHERE vkorg IN s_vkorg.
+    i_vkorg-vkorg = tvko-vkorg.
+    i_vkorg-waers = tvko-waers.
+    APPEND  i_vkorg.
+  ENDSELECT.
+
+ENDFORM.                    " cargar_centros
+
+
+*----------------------------------------------------------------------*
+*          FORM SEL
+*----------------------------------------------------------------------*
+FORM sel.
+
+  REFRESH it_fieldcat.
+  IF p_op2 = 'X'.
+*  CVVECC60 -ALICIA NICOLAS 27/03/2007
+*  Modificacion:
+*  SELECT * FROM DD03L WHERE TABNAME EQ 'ZSDL0002_ALV'.
+    SELECT * FROM dd03l WHERE tabname EQ 'ZSDL0002_ALV' ORDER BY position.
+*FIN CVVECC60 -ALICIA NICOLAS 27/03/2007
+      SELECT SINGLE * FROM dd04t WHERE rollname EQ dd03l-rollname AND
+                                       ddlanguage EQ sy-langu.
+      IF sy-subrc NE 0.
+        dd04t-ddtext = dd03l-fieldname.
+      ENDIF.
+      CLEAR ls_fieldcat.
+      ls_fieldcat-fieldname = dd03l-fieldname.
+      ls_fieldcat-ref_tabname = 'ZSDL0002_ALV'.
+      IF dd03l-fieldname NE 'NAME1'.
+        ls_fieldcat-seltext_s = dd04t-ddtext.
+        ls_fieldcat-seltext_m = dd04t-ddtext.
+        ls_fieldcat-seltext_l = dd04t-ddtext.
+      ELSE.
+        ls_fieldcat-seltext_s = TEXT-026.
+        ls_fieldcat-seltext_m = TEXT-026.
+        ls_fieldcat-seltext_l = TEXT-026.
+        ls_fieldcat-reptext_ddic = TEXT-026.
+      ENDIF.
+* INI CSDPASAPD-1234
+      IF ls_fieldcat-fieldname = 'KMEIN'.
+        ls_fieldcat-edit_mask = '==CUNIT'.
+        "ls_fieldcat-no_convext = 'X'.
+
+      ELSEIF ls_fieldcat-fieldname = 'KPEIN'.
+        ls_fieldcat-qfieldname = 'KMEIN'.
+
+      ELSEIF ls_fieldcat-fieldname = 'KBETR'.
+        ls_fieldcat-cfieldname = 'KONWA' .
+      ENDIF.
+* FIN CSDPASAPD-1234
+      APPEND ls_fieldcat TO it_fieldcat.
+    ENDSELECT.
+  ELSE.
+*  CVVECC60 -ALICIA NICOLAS 27/03/2007
+*  Modificacion:
+*  SELECT * FROM DD03L WHERE TABNAME EQ 'ZSDL0002_ALV' AND
+    SELECT * FROM dd03l WHERE tabname EQ 'ZSDL0002_ALV' AND
+                               fieldname NE 'STPRS' AND
+                               fieldname NE 'VTEXTC' AND
+* INI CSDPASAPD-1234 - Comentamos código
+*                               fieldname NE 'DATAB' AND
+*                               fieldname NE 'DATBI' AND
+* FIN CSDPASAPD-1234
+*                               fieldname NE 'KZUST' AND
+*                              fieldname NE 'LINEA1' AND
+                               fieldname NE 'VTEXTM' AND
+                               fieldname NE 'PORCENTAJE' AND
+                               fieldname NE 'PORCENTAJ1' ORDER BY position.
+      SELECT SINGLE * FROM dd04t WHERE rollname EQ dd03l-rollname AND
+                                       ddlanguage EQ sy-langu.
+*FIN CVVECC60 -ALICIA NICOLAS 27/03/2007
+      IF sy-subrc NE 0.
+        dd04t-ddtext = dd03l-fieldname.
+      ENDIF.
+      CLEAR ls_fieldcat.
+      ls_fieldcat-fieldname = dd03l-fieldname.
+      ls_fieldcat-ref_tabname = 'ZSDL0002_ALV'.
+      IF dd03l-fieldname NE 'NAME1'.
+        ls_fieldcat-seltext_s = dd04t-ddtext.
+        ls_fieldcat-seltext_m = dd04t-ddtext.
+        ls_fieldcat-seltext_l = dd04t-ddtext.
+      ELSE.
+        ls_fieldcat-seltext_s = TEXT-026.
+        ls_fieldcat-seltext_m = TEXT-026.
+        ls_fieldcat-seltext_l = TEXT-026.
+        ls_fieldcat-reptext_ddic = TEXT-026.
+      ENDIF.
+* INI CSDPASAPD-1234
+      IF ls_fieldcat-fieldname = 'KMEIN'.
+        ls_fieldcat-edit_mask = '==CUNIT'.
+        "ls_fieldcat-no_convext = 'X'.
+      ENDIF.
+      IF ls_fieldcat-fieldname = 'KPEIN'.
+        ls_fieldcat-qfieldname = 'KMEIN'.
+
+      ELSEIF ls_fieldcat-fieldname = 'KPEIN'.
+        ls_fieldcat-qfieldname = 'KMEIN'.
+
+      ELSEIF ls_fieldcat-fieldname = 'KBETR'.
+        ls_fieldcat-cfieldname = 'KONWA' .
+      ENDIF.
+* FIN CSDPASAPD-1234
+      APPEND ls_fieldcat TO it_fieldcat.
+    ENDSELECT.
+
+  ENDIF.
+
+  REFRESH it_sort.
+  CLEAR ls_sort.
+  ls_sort-fieldname = 'VKORG'.
+  ls_sort-up        = 'X'.
+  ls_sort-group     = 'X'.
+  APPEND ls_sort TO it_sort.
+  ls_sort-fieldname = 'KUNNR'.
+  ls_sort-up        = 'X'.
+  ls_sort-group     = 'X'.
+  APPEND ls_sort TO it_sort.
+  ls_sort-fieldname = 'NAME1'.
+  ls_sort-up        = 'X'.
+  ls_sort-group     = 'X'.
+  APPEND ls_sort TO it_sort.
+ENDFORM.                    "SEL
+
+
+*----------------------------------------------------------------------*
+*          FORM FUNCTION REUSE_ALV_GRID_DISPLAY
+*----------------------------------------------------------------------*
+FORM alv_display.
+
+  CLEAR is_layout.
+  is_layout-zebra = 'X'.
+  is_layout-colwidth_optimize = 'X'.
+  IF fichero = ' '.
+    CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+      EXPORTING
+*       I_INTERFACE_CHECK      = ' '
+*       I_BYPASSING_BUFFER     =
+*       I_BUFFER_ACTIVE        = ' '
+        i_callback_program     = 'ZSDL0002'
+*       I_CALLBACK_PF_STATUS_SET          = ' '
+*       I_CALLBACK_USER_COMMAND           = ' '
+        i_callback_top_of_page = 'TOP_OF_PAGE'
+*       I_CALLBACK_HTML_TOP_OF_PAGE       = ' '
+*       I_CALLBACK_HTML_END_OF_LIST       = ' '
+*       I_STRUCTURE_NAME       =
+*       I_BACKGROUND_ID        = ' '
+        i_grid_title           = sy-title
+*       I_GRID_SETTINGS        =
+        is_layout              = is_layout
+        it_fieldcat            = it_fieldcat
+*       IT_EXCLUDING           =
+*       IT_SPECIAL_GROUPS      =
+        it_sort                = it_sort
+*       IT_FILTER              =
+*       IS_SEL_HIDE            =
+*       I_DEFAULT              = 'X'
+        i_save                 = 'U'
+        is_variant             = is_variant
+*       IT_EVENTS              =
+*       IT_EVENT_EXIT          =
+*       IS_PRINT               =
+*       IS_REPREP_ID           =
+*       I_SCREEN_START_COLUMN  = 0
+*       I_SCREEN_START_LINE    = 0
+*       I_SCREEN_END_COLUMN    = 0
+*       I_SCREEN_END_LINE      = 0
+*       IT_ALV_GRAPHICS        =
+*       IT_ADD_FIELDCAT        =
+*       IT_HYPERLINK           =
+*       I_HTML_HEIGHT_TOP      =
+*       I_HTML_HEIGHT_END      =
+*   IMPORTING
+*       E_EXIT_CAUSED_BY_CALLER           =
+*       ES_EXIT_CAUSED_BY_USER =
+      TABLES
+        t_outtab               = i_tabl
+*   EXCEPTIONS
+*       PROGRAM_ERROR          = 1
+*       OTHERS                 = 2
+      .
+    IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+  ELSE.
+    PERFORM  excelfile .
+  ENDIF.
+ENDFORM.                    "ALV_DISPLAY
+
+*---------------------------------------------------------------------*
+*       FORM TOP_OF_PAGE                                              *
+*---------------------------------------------------------------------*
+FORM top_of_page.
+  DATA: char(255).
+  DATA: tit1(80).
+  DATA: listheader TYPE slis_t_listheader.
+  DATA: wa_listheader TYPE slis_listheader.
+  DATA: t_datum(20).
+  DATA: t_mat(50).
+
+  CLEAR wa_listheader.
+
+* Empresa
+  IF p_op1 = 'X'.
+    char = TEXT-016.
+  ELSE.
+    char = TEXT-001.
+  ENDIF.
+  wa_listheader-typ = 'S'.
+  wa_listheader-info = char+0(51).
+  APPEND wa_listheader TO listheader.
+  wa_listheader-typ = 'S'.
+  wa_listheader-info = char+51.
+  APPEND wa_listheader TO listheader.
+
+** Organizacion Ventas
+*  IF S_Vkorg-LOW NE ''.
+*    WA_LISTHEADER-TYP = 'S'.
+*    T_MAT = TEXT-004.
+*    CONCATENATE T_MAT S_Vkorg-low INTO TIT1
+*                SEPARATED BY SPACE.
+*    IF S_Vkorg-HIGH NE ''.
+*      CONCATENATE TIT1 'a' S_Vkorg-HIGH INTO TIT1
+*                  SEPARATED BY SPACE.
+*    ENDIF.
+*    WA_LISTHEADER-INFO = TIT1.
+*    APPEND WA_LISTHEADER TO LISTHEADER.
+*  ELSE.
+*    IF S_Vkorg-HIGH NE ''.
+*      WA_LISTHEADER-TYP = 'S'.
+*      T_MAT = TEXT-004.
+*      CONCATENATE T_MAT ' *** a' S_Vkorg-HIGH INTO TIT1
+*                  SEPARATED BY SPACE.
+*      WA_LISTHEADER-INFO = TIT1.
+*      APPEND WA_LISTHEADER TO LISTHEADER.
+*    ENDIF.
+*  ENDIF.
+*
+** Cliente
+*  IF S_kunnr-LOW NE ''.
+*    WA_LISTHEADER-TYP = 'S'.
+*    T_MAT = TEXT-006.
+*    CONCATENATE T_MAT S_kunnr-low INTO TIT1
+*                SEPARATED BY SPACE.
+*    IF S_kunnr-HIGH NE ''.
+*      CONCATENATE TIT1 'a' S_kunnr-HIGH INTO TIT1
+*                  SEPARATED BY SPACE.
+*    ENDIF.
+*    WA_LISTHEADER-INFO = TIT1.
+*    APPEND WA_LISTHEADER TO LISTHEADER.
+*  ELSE.
+*    IF S_kunnr-HIGH NE ''.
+*      WA_LISTHEADER-TYP = 'S'.
+*      T_MAT = TEXT-006.
+*      CONCATENATE T_MAT ' *** a' S_kunnr-HIGH INTO TIT1
+*                  SEPARATED BY SPACE.
+*      WA_LISTHEADER-INFO = TIT1.
+*      APPEND WA_LISTHEADER TO LISTHEADER.
+*    ENDIF.
+*  ENDIF.
+
+* Fecha de precio
+  IF p_op1 = 'X'.
+    wa_listheader-typ = 'S'.
+    t_mat = TEXT-005.
+    WRITE s_datab-low TO char(10).
+    CONCATENATE t_mat char(10) INTO tit1
+                SEPARATED BY space.
+    wa_listheader-info = tit1.
+    APPEND wa_listheader TO listheader.
+  ELSE.
+    wa_listheader-typ = 'S'.
+    t_mat = TEXT-005.
+    WRITE s_datab-low TO char(10).
+    CONCATENATE t_mat char(10) INTO tit1
+                SEPARATED BY space.
+    IF s_datab-high NE '00000000'.
+      WRITE s_datab-high TO char(10).
+      CONCATENATE tit1 'a' char(10) INTO tit1
+                  SEPARATED BY space.
+    ELSE.
+      CONCATENATE tit1 'a 31.12.9999' INTO tit1
+                  SEPARATED BY space.
+    ENDIF.
+    wa_listheader-info = tit1.
+    APPEND wa_listheader TO listheader.
+  ENDIF.
+
+* Fecha
+  wa_listheader-typ = 'S'.
+  t_datum = TEXT-005.
+  WRITE sy-datum TO char(10).
+  CONCATENATE t_datum+0(5): ':' INTO t_datum,
+                       char(10) INTO tit1 SEPARATED BY space.
+  wa_listheader-info = tit1.
+  APPEND wa_listheader TO listheader.
+
+
+  CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+    EXPORTING
+      it_list_commentary = listheader.
+
+ENDFORM.                    "TOP_OF_PAGE
+*&---------------------------------------------------------------------*
+*&      Form  EXCELFILE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM excelfile .
+
+  DATA: BEGIN OF i_excel OCCURS 5.
+          INCLUDE STRUCTURE zsdc000043.
+        DATA: END OF i_excel.
+  DATA: fechat(10).
+  DATA: importet(20).
+  FIELD-SYMBOLS: <fs> TYPE any.
+  DATA: lv_file TYPE string.
+  DATA: lv_path_var TYPE string.
+
+
+  DATA : lv_file_name LIKE rlgrap-filename.
+  DATA : empty(1),
+         fcnt       TYPE i,
+         fpos       TYPE i,
+         cfpos      TYPE i,
+         feld(1000).
+
+  DATA: BEGIN OF ldata OCCURS 100.
+          INCLUDE STRUCTURE rsaqldata.
+        DATA: END OF ldata,
+        maxpos TYPE i.
+  FIELD-SYMBOLS: <feld>,
+                 <cfeld>.
+  DATA: l_pos TYPE i.
+  DATA: l_length    TYPE i,
+        l_number(3) TYPE n,
+        l_pos_f     TYPE i.
+  DATA: text1 TYPE char100.
+  DATA:   li_fcat TYPE slis_t_fieldcat_alv WITH HEADER LINE.
+  CONSTANTS: bufferlength TYPE i VALUE 1024.
+  CONSTANTS: lc_tab TYPE x VALUE '09'.
+  REFRESH ldata.
+
+
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name   = 'ZSDC000043'
+      i_bypassing_buffer = 'X'
+    CHANGING
+      ct_fieldcat        = li_fcat[].
+
+
+
+  LOOP AT i_tabl.
+
+
+
+*oonverion moneda
+    MOVE-CORRESPONDING i_tabl TO i_excel.
+    CLEAR ldata.
+    maxpos = 0.
+    fcnt = 0.
+    LOOP AT  li_fcat INTO ls_fieldcat.
+      fcnt = fcnt + 1.
+      IF fcnt <> 1.
+        l_pos = maxpos + 1.
+        IF l_pos > bufferlength.
+          APPEND ldata.
+          CLEAR ldata.
+          maxpos = 0.
+        ENDIF.
+        maxpos = maxpos + 1.
+      ENDIF.
+
+      fpos = ls_fieldcat-col_pos.
+      ASSIGN COMPONENT fpos OF STRUCTURE i_excel TO <feld>.
+      CASE    ls_fieldcat-datatype.
+        WHEN 'CHAR'.
+          WRITE <feld> TO feld.
+          CALL FUNCTION 'SCP_REPLACE_STRANGE_CHARS'
+            EXPORTING
+              intext  = feld
+            IMPORTING
+              outtext = feld.
+        WHEN 'DATS'.
+          MOVE <feld> TO fechat.
+          WRITE fechat TO feld.
+        WHEN 'CURR'.
+          MOVE <feld> TO feld.
+          REPLACE '.' WITH  ',' INTO feld.
+        WHEN OTHERS.
+          WRITE <feld> TO feld.
+      ENDCASE.
+      SHIFT feld LEFT DELETING LEADING space.
+      l_length = strlen( feld ).
+      l_number = l_length.
+      l_pos_f = maxpos + l_length + 1.
+
+      IF l_pos > bufferlength.
+        APPEND ldata.
+        CLEAR ldata.
+        maxpos = 0.
+      ENDIF.
+
+      IF fcnt = 1.
+        ldata =  feld.
+      ELSE.
+        CONCATENATE ldata feld INTO ldata SEPARATED BY cl_abap_char_utilities=>horizontal_tab.
+      ENDIF.
+      maxpos = maxpos + strlen( l_number ) + 1 + l_length.
+    ENDLOOP.
+
+    APPEND ldata.
+    CLEAR ldata.
+  ENDLOOP.
+  DATA: fecha(14).
+  CONCATENATE sy-datum sy-uzeit INTO fecha.
+*vemos si hay que montar el nombre del fichero
+  MOVE fichero TO  lv_file.
+  IF lv_file CS '$'.
+    REPLACE '$' WITH fecha INTO lv_file.
+  ENDIF.
+
+  lv_file_name = lv_file.
+
+
+  OPEN DATASET lv_file_name FOR OUTPUT IN TEXT MODE ENCODING NON-UNICODE.
+  IF sy-subrc = 0.
+
+
+    LOOP AT ldata.
+
+      TRANSFER ldata TO lv_file_name.
+    ENDLOOP.
+
+
+    CLOSE DATASET lv_file_name.
+  ELSE.
+
+    MESSAGE e222(s_dx_bapi) WITH lv_file_name.
+*   Fichero &1 ya había sido abierto
+
+  ENDIF.
+ENDFORM.                    " EXCELFILE
+
+*&---------------------------------------------------------------------*
+*&      Form  oculta
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM oculta.
+* LOOP AT  SCREEN.
+*   IF screen-name = 'FICHERO' OR screen-name = '%_FICHERO_%_APP_%-TEXT'.
+*     screen-invisible = 1.
+*     screen-input = 0.
+*     screen-active = 0.
+*     MODIFY SCREEN.
+*   ENDIF.
+* ENDLOOP.
+
+ENDFORM.                    "oculta
+*&---------------------------------------------------------------------*
+*&      Form  CAL_CAMBIO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM cal_cambio .
+  DATA: d_tipo_cambio TYPE ukurs_curr.
+  READ TABLE i_tabl.
+  SELECT SINGLE * FROM zmt001w WHERE werks = i_tabl-vkorg.
+  LOOP AT i_tabl.
+    IF i_tabl-konwa <> zmt001w-waers.
+      CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+        EXPORTING
+          date             = sy-datum
+          foreign_amount   = i_tabl-kbetr
+          foreign_currency = i_tabl-konwa
+          local_currency   = zmt001w-waers
+          type_of_rate     = 'M'
+        IMPORTING
+          exchange_rate    = d_tipo_cambio
+          local_amount     = i_tabl-kbetrc
+        EXCEPTIONS
+          no_rate_found    = 1
+          overflow         = 2
+          no_factors_found = 3
+          no_spread_found  = 4
+          OTHERS           = 5.
+      IF sy-subrc <> 0.
+        i_tabl-kbetrc = i_tabl-kbetr.
+      ELSE.
+        i_tabl-konwac = zmt001w-waers.
+        i_tabl-rate = d_tipo_cambio.
+      ENDIF.
+
+    ELSE.
+*COMO LA MONEDA ES LA MISMA SE COPIA
+      i_tabl-kbetrc = i_tabl-kbetr.
+      i_tabl-konwac = i_tabl-konwa.
+    ENDIF.
+    MODIFY i_tabl.
+  ENDLOOP.
+ENDFORM.                    " CAL_CAMBIO
+*&---------------------------------------------------------------------*
+*&      Form  HISTORICO_PRECIOS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM historico_precios .
+
+* Se inicializan variables para detectar el cambio de organización y/o
+* de cliente y/o de material durante la impresión del listado
+  d_vkorg = ''.
+  d_kunnr = ''.
+  d_matnr = ''.
+
+*  SORT i_datos BY vkorg kunnr matnr kschl prt_datab.
+  SORT i_datos BY vkorg kunnr matnr kschl datab.
+
+  CLEAR d_kbetr.
+  CLEAR i_datos.
+  LOOP AT i_datos.
+
+* Si se indica cliente en la pantalla de selección, sacaremos sólo
+* precios a nivel de cliente.
+    IF NOT s_kunnr[] IS INITIAL.
+      CHECK i_datos-kunnr <> space.
+    ENDIF.
+*    d_kschl = i_datos-kschl.
+* Si cambia de organización, salta de página
+    IF ( i_datos-vkorg <> d_vkorg ).
+      IF d_vkorg =''.
+        d_vkorg = i_datos-vkorg.
+      ELSE.
+        PERFORM escribir_linea.
+        d_vkorg = i_datos-vkorg.
+        d_kunnr = ''.
+        d_matnr = ''.
+        IF list = 'X'.
+          NEW-PAGE.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+* Si cambia de cliente, escribe unas líneas de separación
+    IF i_datos-kunnr <> d_kunnr.
+      IF d_kunnr =''.
+        d_kunnr = i_datos-kunnr.
+        d_matnr = ''.
+      ELSE.
+*        IF NOT p_op1 IS INITIAL.
+*          PERFORM escribir_linea.
+*        ENDIF.
+        IF list = 'X'.
+          SKIP 3.
+          WRITE : /2 TEXT-006,             " Cliente
+                  15(6) i_datos-kunnr,
+                  22 i_datos-name1.
+          SKIP.
+        ENDIF.
+        d_kunnr = i_datos-kunnr.
+        d_matnr = ''.
+      ENDIF.
+    ENDIF.
+
+* OPCION 1: Listado de precios con desglose de condiciones
+*           Escribe línea cuando cambia de material
+*    IF NOT p_op1 IS INITIAL.
+*
+*      IF i_datos-matnr <> d_matnr.
+*        IF d_matnr = ''.
+*          REFRESH i_kbetr.
+*          CLEAR  i_kbetr.
+*          d_matnr = i_datos-matnr.
+*          d_name1 = i_datos-name1.
+*          d_konwa = i_datos-konwa.
+*          d_kpein = i_datos-kpein.
+*          d_error = ''.
+*          PERFORM carga_precios.
+*        ELSE.
+*          PERFORM escribir_linea.
+*          PERFORM carga_precios.
+*          d_matnr = i_datos-matnr.
+*          d_konwa = i_datos-konwa.
+*          d_kpein = i_datos-kpein.
+*          d_error = ''.
+*        ENDIF.
+*      ELSE.
+*        IF d_konwa <> i_datos-konwa OR
+*          d_kpein <> i_datos-kpein.
+*          d_error = 'X'.
+*        ENDIF.
+*        PERFORM carga_precios.
+*      ENDIF.
+*    ENDIF.
+
+* OPCION 2: Listado de evolución de precios
+    IF NOT p_op2 IS INITIAL.
+      IF alv IS INITIAL.
+        IF i_datos-matnr <> d_matnr.
+          d_name1 = i_datos-name1.
+          d_matnr = i_datos-matnr.
+        ELSE.
+          i_datos-matnr = ''.
+          i_datos-maktx = ''.
+          i_datos-kdmat = ''.
+          i_datos-stprs = ''.
+        ENDIF.
+      ENDIF.
+      PERFORM carga_precios.
+      PERFORM escribir_linea.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
