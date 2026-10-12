@@ -1,0 +1,3257 @@
+REPORT zpuarcos LINE-SIZE 180 LINE-COUNT 60(0) MESSAGE-ID zc
+            NO STANDARD PAGE HEADING.
+
+************************************************************************
+*Definición de tablas del sistema
+************************************************************************
+TABLES: mara,
+        t686c, zcoestfnew,
+        zdxc_prices_tab,
+        zauxiliar,
+        zekko,
+        marc,
+        eket,
+        ekbe,
+        konm,
+        usr21,
+        eban,
+        adrp,
+        lfa1,
+        tspa,   "Unidad organización: Sectores comerciales
+        tspat,   "Unidad organización: Sectores comerciales textos
+        t001w,                         "Centro de Trabajo
+        t001k,                         "Area de valoración
+        usr03,                         "Area de valoración
+        t001,
+        t024,
+        mbew,
+        makt,
+        ekko,
+        ekpo,
+        a016,
+        a017,
+        konh,
+        konp,
+        equk,
+        equp,
+        konv,
+        cdhdr,
+        cdpos,
+        dd03l.
+************************************************************************
+*Definición de constantes
+************************************************************************
+CONSTANTS: c_clase_con      LIKE a016-kschl VALUE 'PB00', "Precio Bruto
+           c_clase_ped      LIKE a016-kschl VALUE 'PBXX', "Porcentaje
+           c_clase_por      LIKE a016-kschl VALUE 'ZICM', "Porcentaje
+           c_bstyp          LIKE ekko-bstyp VALUE 'L', "Plan de entregas.
+           c_bstyp_pd       LIKE ekko-bstyp VALUE 'F', "Pedido abierto.
+           c_kappl          LIKE a016-kappl VALUE 'M', "Compras
+           c_objectclas     LIKE cdhdr-objectclas VALUE 'COND_A',
+           c_objectclas_ped LIKE cdhdr-objectclas VALUE 'EINKBELEG',
+           c_id_text        LIKE thead-tdid VALUE 'L01',
+           c_obj_text       LIKE thead-tdobject VALUE 'EKPO',
+           c_pp01           LIKE tc04-capid   VALUE 'PP01'.
+
+DATA: indice LIKE sy-tabix.
+************************************************************************
+*Definición de variables
+************************************************************************
+DATA: p_centro            LIKE marc-werks, "Variables para los valores de la...
+      d_divisi            LIKE mara-spart, "..pantalla de selección.Busqueda de los
+      d_entradas          LIKE sy-tabix,        "Nº Entradas de i_materiales
+      d_factor_conversion TYPE f, "Convesión de unidades, para función
+      d_pagina(11),
+      d_flag(1), "Control de impresión de las diferentes partes de la...
+      "...cabecera
+      d_fecha_ini_c(10),               "Fecha inicial en char
+      d_cantidad_por      LIKE konp-kbetr,
+      d_precio_mil, "Flag para indicar si la cantidad base es 1000.
+      d_name_obj          LIKE thead-tdname,
+      d_flag2(1),                      "Control de nueva linea en blanco
+      syaux               LIKE sy-tabix,
+      can                 LIKE zcoestf-cantid,
+      fecha               LIKE sy-datum,
+      d_precio_aux        LIKE bsim-dmbtr.
+
+
+DATA: d_mara LIKE mara.
+DATA: lines LIKE sy-tabix.
+DATA: borra(1).
+DATA: clave LIKE konp-knumh.
+INCLUDE zinbatch.
+*----------------------------------------------------------------------*
+*  Variables para ALV
+*----------------------------------------------------------------------*
+TYPE-POOLS:
+  slis,kkblo.
+DATA:
+  i_grid_settings    TYPE lvc_s_glay,
+  is_layout          TYPE slis_layout_alv,
+  is_variant         TYPE disvariant,
+  it_fieldcat        TYPE slis_t_fieldcat_alv,
+  it_events          TYPE slis_t_event,
+  it_sort            TYPE slis_t_sortinfo_alv,
+  it_list_commentary TYPE slis_t_listheader,
+  ls_list_commentary TYPE slis_listheader,
+  it_specialcol      TYPE slis_t_specialcol_alv,
+
+
+  ls_specialcol      TYPE slis_specialcol_alv.
+
+DATA: tab_list_of_list TYPE slis_t_listheader,
+      s_line           TYPE slis_listheader.
+
+************************************************************************
+*Definición de tablas internas
+************************************************************************
+DATA: BEGIN OF mot OCCURS 100,
+        kzust LIKE v_t686c-kzust,
+      END OF mot.
+DATA: i_a016                TYPE TABLE OF a016    WITH HEADER LINE.
+*Table interna con los documentos de compras.
+DATA: BEGIN OF i_ekko OCCURS 100,
+        bstyp LIKE ekko-bstyp,
+        ebeln LIKE ekko-ebeln,
+        lifnr LIKE ekko-ebeln,
+        ekgrp LIKE ekko-ekgrp,
+        inco1 LIKE ekko-inco1,
+        inco2 LIKE ekko-inco2,
+        waers LIKE ekko-waers,
+        spras LIKE ekko-spras,
+        knumv LIKE ekko-knumv,
+        bedat LIKE ekko-bedat,
+        zterm LIKE ekko-zterm,
+      END OF i_ekko.
+*Tabla interna con los datos iniciales de materiales.
+DATA: BEGIN OF i_materiales OCCURS 100,
+        matnr       LIKE mara-matnr,
+        descripcion LIKE makt-maktx,
+        werks       LIKE ekpo-werks,
+        mtart       LIKE mara-mtart,
+        desc_centro LIKE t001w-name1,
+        zplp1       LIKE mbew-zplp1,
+*       vmstp like mbew-vmstp,
+*       vjstp like mbew-vjstp,
+        meins       LIKE mara-meins,
+        ref_ant     LIKE mara-bismt,
+        spart       LIKE mara-spart,
+        vtext       LIKE tspat-vtext,
+        waers       LIKE ekko-waers,         "Moneda de la sociedad
+        ebeln       LIKE ekko-ebeln,
+        bwkey       LIKE t001k-bwkey,        " 3 = subcontratación.
+        peinh       LIKE mbew-peinh,
+*Mod.Javi Arce.Nov11.PS122712.Añadir Proyecto (ZPIP/ZPFP/ZMD01)
+        prdha       LIKE mara-prdha,
+*End Mod.Javi Arce.Nov11.PS122712.
+      END OF i_materiales.
+*Tabla interna con los datos de posición de documento
+DATA: BEGIN OF i_ekpo OCCURS 100,
+        ebeln             LIKE ekpo-ebeln,
+        ebelp             LIKE ekpo-ebelp,
+        loekz             LIKE ekpo-loekz,
+        matnr             LIKE mara-matnr,
+        lifnr             LIKE ekko-lifnr,
+        waers             LIKE ekko-waers,         "Moneda de doc. compras.
+        bprme             LIKE ekpo-bprme,
+*       netpr like ekpo-netpr,
+*       peinh like ekpo-peinh,
+        werks             LIKE ekpo-werks,
+        ekgrp             LIKE ekko-ekgrp,
+        matkl             LIKE ekpo-matkl,
+        inco1             LIKE ekpo-inco1, "Se copian los incoterms de la cabecera
+        inco2             LIKE ekpo-inco2,
+        spras             LIKE ekko-spras,
+        observaciones     LIKE tline-tdline,
+        pstyp             LIKE ekpo-pstyp,         " 3 = subcontratación.
+        bstyp             LIKE ekko-bstyp,
+        knumv             LIKE ekko-knumv,
+        bedat             LIKE ekko-bedat,
+        txz01             LIKE ekpo-txz01,
+        idnlf             LIKE ekpo-idnlf,
+        retpo             LIKE ekpo-retpo,
+        zveces            TYPE p LENGTH 9, "LIKE ekpo-zveces,
+        zzfrecuencia      TYPE c, "LIKE ekpo-zzfrecuencia,
+        bstmi             LIKE ekpo-bstmi,
+        zzenbalage        TYPE c, "LIKE ekpo-zzenbalage,
+        plifz             LIKE ekpo-plifz,
+        zzfechapri        LIKE sy-datum, "LIKE ekpo-zzfechapri,
+        zplazomuestxt(20) TYPE c, " LIKE ekpo-zplazomuestxt,
+        repos             LIKE ekpo-repos,
+        zterm             LIKE ekko-zterm,
+      END OF i_ekpo.
+*Tabla interna con las condiciones de cada proveedor
+DATA:BEGIN OF i_condiciones OCCURS 10,
+       ebeln         LIKE ekpo-ebeln,
+       ebelp         LIKE ekpo-ebelp,
+       lifnr         LIKE lfa1-lifnr,
+       fecha_inicial LIKE sy-datum,
+       fecha_fin     LIKE sy-datum,
+       modif         LIKE konh-kzust,                              "Char de 3
+*       precio_prov(11) type p decimals 2,
+       precio_prov   LIKE konp-kbetr,   "Precio o porcentaje de condición
+       precio_efect  LIKE konp-kbetr,  "Precio efectivo
+       precio_fca    LIKE konp-kbetr,  "Precio efectivo
+       precio_log    LIKE konp-kbetr,  "Precio efectivo
+       zlog          LIKE zpfp_alv-zlog,
+       zfle          LIKE zpfp_alv-zfle,
+       moneda1       LIKE konv-waers,
+       base          LIKE konp-kpein,
+       unidad_ped    LIKE mara-meins,
+       knumh         LIKE a017-knumh,
+       nivel(4)      TYPE c, " LIKE zppning-zppniv,
+*       nivel(2),
+       username      LIKE lfa1-name1,
+       userdate      LIKE cdhdr-udate,
+       fecha_porcent LIKE sy-datum,   "Porcentaje de cuota
+       porcent       LIKE equp-quote,
+       utillaje      LIKE konp-kbetr,
+       monuti        LIKE konv-waers,
+       kosrt         LIKE konh-kosrt,
+       inco1         LIKE konh-inco1,
+       inco2         LIKE konh-inco2,
+       linea1        LIKE konh-linea1,
+       linea2        LIKE konh-linea2,
+       linea3        LIKE konh-linea3,
+       linea4        LIKE konh-linea4,
+       impuesto      LIKE konh-impuesto,
+       reper         LIKE konh-reper,
+       lccp          LIKE konh-lccp,
+       fechar        LIKE konh-fechar,
+       serie         LIKE konh-serie,
+       proyecto      LIKE konh-proyecto,
+       zicms         TYPE p DECIMALS 2,
+       banfn         LIKE konh-banfn,
+       bnfpo         LIKE konh-bnfpo,
+       retpo         LIKE ekpo-retpo,
+       repos         LIKE ekpo-repos,
+       loekz         LIKE ekpo-loekz,
+       revno         LIKE konh-revno,
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO ini
+       indexed       LIKE konh-serie,
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO fin
+     END OF i_condiciones.
+
+DATA:BEGIN OF i_condicionesb OCCURS 10.
+       INCLUDE  STRUCTURE i_condiciones.
+     DATA: END OF i_condicionesb.
+
+*Tabla interna con los datos de la linea de detalle
+DATA:BEGIN OF i_linea_det OCCURS 100,
+       ebeln             LIKE ekpo-ebeln,
+       ebelp             LIKE ekpo-ebelp,
+       lifnr             LIKE lfa1-lifnr,
+       name1             LIKE lfa1-name1,
+       nivel(2),                      "Nivel de ingeniería
+       fecha_inicial     LIKE sy-datum,
+       fecha_fin         LIKE sy-datum,
+       bloqueo(1), "indicador de posición bloqueada, Loekz
+       modif             LIKE konh-kzust,                              "Char de 3
+       linea1            LIKE konh-linea1,
+       linea2            LIKE konh-linea2,
+       linea3            LIKE konh-linea3,
+       linea4            LIKE konh-linea4,
+       impuesto          LIKE konh-impuesto,
+       reper             LIKE konh-reper,
+       lccp              LIKE konh-lccp,
+       fechar            LIKE konh-fechar,
+       serie             LIKE konh-serie,
+       proyecto          LIKE konh-proyecto,
+       banfn             LIKE konh-banfn,
+       bnfpo             LIKE konh-bnfpo,
+       zicms             TYPE p DECIMALS 2,
+       inco1             LIKE ekpo-inco1,
+       inco2             LIKE ekpo-inco2,
+       observaciones(40),
+       username          LIKE lfa1-name1,
+       userdate          LIKE cdhdr-udate,
+       utillaje          LIKE konp-kbetr,
+       monuti            LIKE konv-waers,
+       precio_prov(16)   TYPE p DECIMALS 2, "LIKE konp-kbetr,
+       moneda1           LIKE konv-waers,
+       base              LIKE  konp-kpein,
+       precio_efect(16)  TYPE p DECIMALS 2, "LIKE ekpo-netpr,
+       moneda2           LIKE ekko-waers,
+       precio_fca(16)    TYPE p DECIMALS 2, "LIKE ekpo-netpr,
+       precio_log(16)    TYPE p DECIMALS 2, "LIKE ekpo-netpr,
+       zlog              LIKE zpfp_alv-zlog,
+       zfle              LIKE zpfp_alv-zfle,
+       fecha_porcent(10),
+       porcent           LIKE equp-quote,
+       pstyp             LIKE ekpo-pstyp,         " 3 = subcontratación.
+       txz01             LIKE ekpo-txz01,
+       idnlf             LIKE ekpo-idnlf,
+       bstyp             LIKE ekpo-bstyp,
+       matkl             LIKE ekpo-matkl,
+       knumh             LIKE konh-knumh,
+       zveces            TYPE p LENGTH 9, "LIKE ekpo-zveces,
+       zzfrecuencia      TYPE c, "LIKE ekpo-zzfrecuencia,
+       bstmi             LIKE ekpo-bstmi,
+       zzenbalage        TYPE c, "LIKE ekpo-zzenbalage,
+       plifz             LIKE ekpo-plifz,
+       zzfechapri        LIKE sy-datum, "LIKE ekpo-zzfechapri,
+       zplazomuestxt(20) TYPE c, " LIKE ekpo-zplazomuestxt,
+       repos             LIKE ekpo-repos,
+       zterm             LIKE ekko-zterm,
+       revno             LIKE konh-revno,
+       kosrt             LIKE konh-kosrt,
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO ini
+       indexed           LIKE konh-serie,
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO fin
+     END OF i_linea_det.
+
+*tabla interna para funcion read_text
+DATA:BEGIN OF i_lines OCCURS 0.
+       INCLUDE STRUCTURE tline.
+     DATA:END OF i_lines.
+*EStructura y tablas internas para función BOM
+DATA: BEGIN OF r_topmat.
+        INCLUDE STRUCTURE cstmat.
+      DATA: END OF r_topmat.
+*
+DATA: BEGIN OF i_stb OCCURS 0.
+        INCLUDE STRUCTURE stpox.
+      DATA: END OF i_stb.
+*
+DATA: value LIKE dd07v-domvalue_l.
+DATA: text(60).
+
+
+DATA: BEGIN OF i_matcat OCCURS 0.
+        INCLUDE STRUCTURE cscmat.
+      DATA: END OF i_matcat.
+*Tabla con la lista de materiales.
+DATA: BEGIN OF i_bom OCCURS 0,
+        matnr LIKE mara-matnr,
+        ebeln LIKE ekpo-ebeln,
+        ebelp LIKE ekpo-ebelp,
+        stlnr LIKE cstmat-stlnr,
+        fecha LIKE sy-datum,
+      END OF i_bom.
+*Tablas internas con los datos de pedidos de los materiales subcontratad
+DATA: BEGIN OF i_ekpo_sub OCCURS 0.
+        INCLUDE STRUCTURE i_ekpo.
+      DATA: END OF i_ekpo_sub.
+DATA: BEGIN OF i_linea_sub OCCURS 0.
+DATA: matnr LIKE mara-matnr.
+      INCLUDE STRUCTURE i_linea_det.
+      DATA: END OF i_linea_sub.
+
+
+
+* Tabla interna para el ALV
+DATA: BEGIN OF i_alv OCCURS 0.
+        INCLUDE STRUCTURE zpfp_alv.
+      DATA:
+*       Campos para delta15
+              aho_audit TYPE p DECIMALS 4,
+              aho_anual TYPE p DECIMALS 4,
+              diferenc  TYPE p DECIMALS 4,
+              aho_finan TYPE p DECIMALS 4,
+              dif_finan TYPE p DECIMALS 4,
+              knumh     LIKE konh-knumh,
+              color     TYPE slis_t_specialcol_alv.
+DATA: END OF i_alv.
+DATA: BEGIN OF i_alv2 OCCURS 0.
+        INCLUDE STRUCTURE zpfp_alv2.
+      DATA: END OF i_alv2.
+
+DATA: BEGIN OF i_alv3 OCCURS 0.
+        INCLUDE STRUCTURE zpfp_alv3.
+      DATA: END OF i_alv3.
+
+
+*Mod IDE. ZPFP en RFC.
+* tabla interna para RFC.
+DATA: BEGIN OF i_rfc OCCURS 0.
+        INCLUDE STRUCTURE zpfp_alv.
+      DATA: END OF i_rfc.
+* end mod IDE
+
+DATA: BEGIN OF i_konh OCCURS 0.
+        INCLUDE STRUCTURE konh.
+      DATA: END OF i_konh.
+*----------------------------------------------------------------------*
+*REGISTROS
+*----------------------------------------------------------------------*
+DATA: BEGIN OF r_header.
+        INCLUDE STRUCTURE thead.
+      DATA: END OF r_header.
+
+RANGES: matnr FOR mara-matnr.
+*----------------------------------------------------------------------*
+*DEFINICIÓN DE PANTALLA DE SELECCIÓN
+*----------------------------------------------------------------------*
+SELECTION-SCREEN: BEGIN OF BLOCK marco WITH FRAME TITLE TEXT-001.
+SELECTION-SCREEN: SKIP.
+SELECT-OPTIONS: s_bukrs FOR ekko-bukrs MEMORY ID brk. "Mod IDE PS:56344
+SELECT-OPTIONS: d_centro FOR marc-werks MEMORY ID wrk.
+SELECT-OPTIONS : s_ekgrp FOR ekko-ekgrp.
+PARAMETERS: p_divisi LIKE mara-spart.
+
+SELECTION-SCREEN: SKIP.
+SELECT-OPTIONS: s_materi FOR mara-matnr MATCHCODE OBJECT mat1  MEMORY ID mat.
+SELECT-OPTIONS: s_famili FOR mara-matkl.
+SELECT-OPTIONS: s_proved FOR lfa1-lifnr MATCHCODE OBJECT kred.
+SELECT-OPTIONS: motivo   FOR zauxiliar-kzust.
+SELECT-OPTIONS: s_bstyp  FOR ekko-bstyp.
+SELECT-OPTIONS: s_revno  FOR ekko-revno.
+SELECT-OPTIONS: s_iss  FOR zdxc_prices_tab-zdxc_isscode.
+SELECTION-SCREEN: SKIP.
+SELECTION-SCREEN: END OF BLOCK marco.
+
+
+SELECTION-SCREEN: BEGIN OF BLOCK marco1 WITH FRAME TITLE TEXT-101.
+PARAMETERS: r_alv RADIOBUTTON GROUP g1 DEFAULT 'X'.
+PARAMETERS: r_lis RADIOBUTTON GROUP g1.
+
+SELECTION-SCREEN: END OF BLOCK marco1.
+
+SELECTION-SCREEN: BEGIN OF BLOCK marco5 WITH FRAME TITLE TEXT-175.
+PARAMETERS: util AS CHECKBOX DEFAULT ' '.
+PARAMETERS: emrf AS CHECKBOX DEFAULT 'X'.
+PARAMETERS: c_user AS CHECKBOX DEFAULT ' '.
+PARAMETERS: ahorro AS CHECKBOX DEFAULT ' '.
+SELECTION-SCREEN: END OF BLOCK marco5.
+
+PARAMETERS: p_pid(10) NO-DISPLAY. "MOD IDE. ZPFP RFC
+************************************************************************
+*                  LOGICA DEL PROGRAMA
+************************************************************************
+*----------------------------------------------------------------------*
+* VALIDACIONES DE PARAMETROS
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+*Validación de Centro.
+*  IF P_CENTRO IS INITIAL.
+*    D_CENTRO = '%'.
+*  ELSE.
+*    SELECT SINGLE * FROM T001W WHERE WERKS = P_CENTRO.
+*    IF SY-SUBRC <> 0.
+*      MESSAGE E001 WITH P_CENTRO.
+*    ENDIF.
+*    D_CENTRO = P_CENTRO.
+*  ENDIF.
+*Validación de Division o Sector
+  IF p_divisi IS INITIAL.
+    d_divisi = '%'.
+  ELSE.
+    SELECT SINGLE * FROM tspa WHERE spart = p_divisi.
+    IF sy-subrc <> 0.
+      MESSAGE e019 WITH p_divisi.
+    ENDIF.
+    d_divisi = p_divisi.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+* INICIALIZACION ANTES DE PEDIR LOS PARAMETROS
+*----------------------------------------------------------------------*
+INITIALIZATION.
+  REFRESH i_ekko.
+  REFRESH i_ekpo.
+  REFRESH i_materiales.
+  REFRESH i_condiciones.
+  REFRESH i_alv.
+  CLEAR it_specialcol[].
+  DATA: ls_dd03l TYPE dd03l.
+  SELECT fieldname INTO ls_dd03l-fieldname FROM dd03l WHERE tabname EQ 'ZPFP_ALV'.
+    CLEAR ls_specialcol.
+    ls_specialcol-fieldname = ls_dd03l-fieldname.
+    ls_specialcol-color-col = 7.
+    APPEND ls_specialcol TO it_specialcol.
+
+  ENDSELECT.
+*----------------------------------------------------------------------*
+* START-OF-SELECTION
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+  PERFORM contratos.
+  PERFORM moneda_sociedad.
+  PERFORM cabecera_ficha. "Datos cabecera para cada material
+  PERFORM datos_condicion TABLES i_ekpo.  "Planes de entrega : L.
+  PERFORM datos_condicion_cer TABLES i_ekpo.    "Pedidos tipo F.
+  LOOP AT i_materiales.
+    PERFORM datos_linea.
+*Mod.Javi Arce.Nov12.PS197628.ZPFP ALV. No calcular subcontratación
+    IF r_lis = 'X' AND p_pid IS INITIAL. "MOD IDE. ZPFP RFC
+      PERFORM material_subcont.
+*End Mod.Javi Arce.Nov12.PS197628.
+      PERFORM imprimir_linea.
+      d_flag = space.  "Permite sacar la cabecera de datos para el sig..
+      NEW-PAGE.                          "...material
+    ELSE.
+      PERFORM pasar_alv.
+    ENDIF.
+  ENDLOOP.
+  IF r_alv = 'X' AND p_pid IS INITIAL. "Mod IDE. ZPFP RFC
+    PERFORM mostrar_alv.
+  ENDIF.
+  "Mod IDE. ZPFP RFC
+  IF p_pid IS NOT INITIAL.
+    REFRESH i_rfc.
+    LOOP AT i_alv.
+      MOVE-CORRESPONDING i_alv TO i_rfc.
+      APPEND i_rfc. CLEAR i_rfc.
+    ENDLOOP.
+
+    EXPORT i_rfc TO MEMORY ID p_pid.
+  ENDIF.
+*----------------------------------------------------------------------*
+* TOP-OF-PAGE
+*----------------------------------------------------------------------*
+TOP-OF-PAGE.
+  PERFORM cabecera.
+  IF d_flag = 'X'.  "Solo imprime la cabecera de la linea de detalle
+    PERFORM cabecera_linea.
+  ELSE.
+    PERFORM cabecera_datos.
+    PERFORM cabecera_linea.
+  ENDIF.
+*----------------------------------------------------------------------*
+*                      FORMS - SUBRUTINAS
+*----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA
+*&---------------------------------------------------------------------*
+*   Cabecera del Listado                                               *
+*----------------------------------------------------------------------*
+FORM cabecera.
+  MOVE sy-pagno TO d_pagina.
+  CONCATENATE TEXT-002 d_pagina+7(3) INTO d_pagina SEPARATED BY space.
+  WRITE: 2 TEXT-003, i_materiales-desc_centro, 70 TEXT-004,
+          102 TEXT-023, 109 sy-datum, 121 d_pagina.
+  ULINE.
+  SKIP.
+ENDFORM.                               " CABECERA
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA_DATOS
+*&---------------------------------------------------------------------*
+*    Datos de cabecera de la tabla interna i_materiales                *
+*----------------------------------------------------------------------*
+FORM cabecera_datos.
+  WRITE: 2 TEXT-005, i_materiales-matnr,
+                      60 TEXT-024, 76 i_materiales-mtart, 83 TEXT-077,
+93 i_linea_det-matkl.
+  WRITE: /2 TEXT-006,17 i_materiales-descripcion,
+                    60 TEXT-009, 76 i_materiales-meins.
+  WRITE: /2 TEXT-007, i_materiales-vtext, 60 TEXT-010,
+   76 i_materiales-zplp1 CURRENCY i_materiales-waers, i_materiales-waers
+.
+  WRITE: i_materiales-peinh, '/', i_materiales-meins.
+
+*  IF D_PRECIO_MIL = 'X'.
+*    WRITE TEXT-025.
+*  ELSE.
+*    WRITE TEXT-026.
+*  ENDIF.
+  WRITE: /2 TEXT-008, i_materiales-ref_ant.
+  SKIP.
+ENDFORM.                               " CABECERA_DATOS
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA_LINEA
+*&---------------------------------------------------------------------*
+*    Cabecera de la Linea de Detalle                                   *
+*----------------------------------------------------------------------*
+FORM cabecera_linea.
+  FORMAT COLOR 1 INTENSIFIED ON.
+  WRITE: /1 TEXT-013, 15 TEXT-014, 39 TEXT-015, 44 TEXT-016,
+          55 TEXT-017, 59 TEXT-030, 62 TEXT-020, 78 TEXT-021,
+          84 TEXT-022, 99 TEXT-021, 104 TEXT-018, 115 TEXT-019,
+          132 TEXT-027, 120 TEXT-038.
+  FORMAT COLOR OFF INTENSIFIED ON.
+  NEW-LINE.
+  ULINE AT 1(6).
+  ULINE AT 8(30).
+  ULINE AT 39(4).
+  ULINE AT 44(10).
+  ULINE AT 55(3).
+  ULINE AT 59(2).
+  ULINE AT 62(15).
+  ULINE AT 78(4).
+  ULINE AT 83(15).
+  ULINE AT 99(4).
+  ULINE AT 104(10).
+  ULINE AT 115(3).
+  ULINE AT 120(50).
+ENDFORM.                               " CABECERA_LINEA
+*&---------------------------------------------------------------------*
+*&      Form  MONEDA_SOCIEDAD
+*&---------------------------------------------------------------------*
+*  Buscamos la moneda de la sociedad para los importes de precios      *
+* objetivos.
+*----------------------------------------------------------------------*
+FORM moneda_sociedad.
+  LOOP AT i_materiales.
+    SELECT SINGLE * FROM t001w WHERE werks = i_materiales-werks.
+    IF sy-subrc = 0.
+      i_materiales-bwkey = t001w-bwkey.
+      SELECT SINGLE * FROM t001k WHERE bwkey = t001w-bwkey.
+      IF sy-subrc = 0.
+        SELECT SINGLE * FROM t001 WHERE bukrs = t001k-bukrs.
+        IF sy-subrc = 0.
+          i_materiales-waers = t001-waers.
+          MODIFY i_materiales.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.                               " MONEDA_SOCIEDAD
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA_FICHA
+*&---------------------------------------------------------------------*
+*   Datos de Cabecera de la ficha de precios                           *
+*----------------------------------------------------------------------*
+FORM cabecera_ficha.
+*Buscamos los demás datos de la cabecera.
+  LOOP AT i_materiales.
+    SELECT SINGLE *                           "#EC CI_ALL_FIELDS_NEEDED
+      FROM mbew
+     WHERE matnr = i_materiales-matnr
+       AND bwkey = i_materiales-bwkey.
+    IF sy-subrc = 0.                   "Precios objetivo
+      i_materiales-zplp1 = mbew-zplp1.
+* Guardamos la cantidad base.
+      i_materiales-peinh = mbew-peinh.
+**Si el precio viene en 1000, marcamos un flag
+*      IF MBEW-PEINH = '1000'.
+*        D_PRECIO_MIL = 'X'.
+*      ELSE.
+*        D_PRECIO_MIL = SPACE.
+*      ENDIF.
+    ENDIF.
+*Buscamos el texto de la división
+    SELECT SINGLE * FROM tspat WHERE spras = sy-langu
+                               AND   spart = i_materiales-spart.
+    IF sy-subrc = 0.
+      i_materiales-vtext = tspat-vtext.
+    ENDIF.
+**Descripción del material en MAKT
+*    SELECT SINGLE * FROM makt WHERE matnr = i_materiales-matnr
+*                              AND spras = sy-langu.
+*    IF sy-subrc = 0.
+*      i_materiales-descripcion = makt-maktx.
+*    ENDIF.
+*Descripción del centro.
+    SELECT SINGLE * FROM t001w WHERE werks = i_materiales-werks.
+    IF sy-subrc = 0.
+      i_materiales-desc_centro = t001w-name1.
+    ENDIF.
+    MODIFY i_materiales.
+  ENDLOOP.
+ENDFORM.                               " CABECERA_FICHA
+*&---------------------------------------------------------------------*
+*&      Form  datos_condicion
+*&---------------------------------------------------------------------*
+*   Datos de la linea de detalle del listado para planes de entrega.   *
+*----------------------------------------------------------------------*
+FORM datos_condicion TABLES p_ekpo STRUCTURE i_ekpo.
+  LOOP AT p_ekpo WHERE bstyp = c_bstyp.
+*  Si hay distintas entradas significa que hay varios condiciones de
+* precio para ese documento para distintas fechas. Condiciones por
+* posición del documento.
+    IF p_ekpo-pstyp <> '2'.
+      SELECT * FROM a016 WHERE kappl = c_kappl
+                          AND  kschl = c_clase_con
+                          AND  evrtn = p_ekpo-ebeln
+                          AND  evrtp = p_ekpo-ebelp.
+        CLEAR i_condiciones.
+        i_condiciones-ebeln = p_ekpo-ebeln.
+        i_condiciones-ebelp = p_ekpo-ebelp.
+        i_condiciones-lifnr = p_ekpo-lifnr.
+        i_condiciones-fecha_inicial = a016-datab.
+*fecha fin
+        i_condiciones-fecha_fin = a016-datbi.
+*
+        i_condiciones-knumh = a016-knumh.
+        i_condiciones-repos = 'X'.
+        APPEND i_condiciones.
+      ENDSELECT.
+
+    ELSE.
+      SELECT * FROM a017   WHERE kappl = c_kappl
+       AND kschl = c_clase_con
+
+                                          AND lifnr = p_ekpo-lifnr
+                                          AND matnr = p_ekpo-matnr
+                                          AND werks = p_ekpo-werks
+                                          AND esokz = '2'.
+        CLEAR i_condiciones.
+        i_condiciones-ebeln = p_ekpo-ebeln.
+        i_condiciones-ebelp = p_ekpo-ebelp.
+        i_condiciones-lifnr = p_ekpo-lifnr.
+        i_condiciones-fecha_inicial = a017-datab.
+*fecha fin
+        i_condiciones-fecha_fin = a017-datbi.
+*
+        i_condiciones-knumh = a017-knumh.
+        i_condiciones-repos = 'X'.
+        APPEND i_condiciones.
+
+      ENDSELECT.
+
+    ENDIF.
+
+    REFRESH i_condicionesb.
+    LOOP AT i_condiciones WHERE ebeln = p_ekpo-ebeln
+                          AND   ebelp = p_ekpo-ebelp
+                          AND   lifnr = p_ekpo-lifnr.
+      indice = sy-tabix.
+      SELECT SINGLE * FROM konh WHERE knumh = i_condiciones-knumh
+                                AND kappl = c_kappl
+                                AND kschl = c_clase_con
+                                AND revno IN s_revno
+                                AND kosrt IN s_iss.
+      IF sy-subrc = 0.                 "Modificación
+        i_condiciones-linea1 = konh-linea1.
+        i_condiciones-linea2 = konh-linea2.
+        i_condiciones-linea3 = konh-linea3.
+        i_condiciones-linea4 = konh-linea4.
+        i_condiciones-impuesto = konh-impuesto.
+        i_condiciones-nivel =  konh-zppniv.
+        i_condiciones-revno =  konh-revno.
+        i_condiciones-reper = konh-reper.
+        i_condiciones-lccp = konh-lccp.
+        i_condiciones-kosrt = konh-kosrt.
+        IF konh-fechar <> 0.
+          i_condiciones-fecha_inicial = konh-fechar.
+        ENDIF.
+        i_condiciones-fechar = konh-fechar.
+        i_condiciones-serie = konh-serie.
+        i_condiciones-proyecto = konh-proyecto.
+
+
+        i_condiciones-banfn  = konh-banfn.
+        i_condiciones-bnfpo  = konh-bnfpo.
+        IF konh-inco1 <> space.
+          i_condiciones-inco1 = konh-inco1.
+          i_condiciones-inco2 = konh-inco2.
+        ELSE.
+          IF i_ekpo-inco1 <> ' '.
+            i_condiciones-inco1 = i_ekpo-inco1.
+            i_condiciones-inco2 = i_ekpo-inco2.
+          ELSE.
+            i_condiciones-inco1 = i_ekko-inco1.
+            i_condiciones-inco2 = i_ekko-inco2.
+          ENDIF.
+
+        ENDIF.
+
+
+
+
+        IF konh-kzust IS INITIAL.
+          i_condiciones-modif = 'NN'.
+        ELSE.
+          i_condiciones-modif = konh-kzust.
+        ENDIF.
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO ini
+        IF konh-serie IS NOT INITIAL.
+          i_condiciones-indexed = konh-serie.
+        ENDIF.
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO fin
+
+*Precio del proveedor para cada condición, moneda, base y unidad
+        borra = space.
+        SELECT * FROM konp                    "#EC CI_ALL_FIELDS_NEEDED
+          WHERE knumh = i_condiciones-knumh
+          AND kappl = c_kappl
+          AND kschl = c_clase_con.
+*
+*PARA GUARDAR PLOS PRECIOS BORRADOS
+          IF konp-loevm_ko = 'X'.
+            borra = 'X'.
+          ELSE.
+            borra = space.
+          ENDIF.
+          i_condiciones-loekz = konp-loevm_ko.
+
+          i_condiciones-precio_prov = konp-kbetr.
+          i_condiciones-base = konp-kpein.
+          i_condiciones-moneda1 = konp-konwa.
+          i_condiciones-unidad_ped = konp-kmein.
+*Se calculan los precios efectivos y de proveedor.
+          PERFORM calculo_precios USING p_ekpo-werks  p_ekpo-lifnr  p_ekpo-matnr.
+*Nivel de ingeniería del material
+          PERFORM nivel_ingenieria.
+*Localización del último usuario que ha cambiado la condición.
+          CLEAR i_condiciones-username.
+          CLEAR i_condiciones-userdate.
+          IF c_user = 'X'.
+*        PERFORM USUARIO USING C_OBJECTCLAS
+            PERFORM usuario2 USING c_objectclas
+                                i_condiciones-knumh.
+            IF i_condiciones-username = space.
+              PERFORM usuario2 USING c_objectclas_ped
+                                       i_condiciones-ebeln.
+
+
+            ENDIF.
+          ENDIF.
+
+*****Datos del porcentaje de participación
+* Si estamos tratando el precio vigente a día de hoy, buscamos la
+* Cond. vigente a día de hoy.
+
+          IF sy-datum >= i_condiciones-fecha_inicial AND
+             sy-datum <= i_condiciones-fecha_fin.
+            SELECT SINGLE * FROM equk
+                WHERE matnr = p_ekpo-matnr
+                AND   werks = p_ekpo-werks
+                AND   bdatu >= sy-datum
+                AND   vdatu <= sy-datum.
+
+          ELSE.
+            SELECT SINGLE * FROM equk
+                   WHERE matnr = p_ekpo-matnr
+                   AND   werks = p_ekpo-werks
+                   AND   bdatu >= i_condiciones-fecha_inicial
+*            antes fecha inicio
+                   AND   vdatu <= i_condiciones-fecha_fin.
+          ENDIF.
+          IF sy-subrc = 0.
+            i_condiciones-fecha_porcent = equk-vdatu.
+            SELECT * FROM equp                "#EC CI_ALL_FIELDS_NEEDED
+              WHERE qunum = equk-qunum
+                               AND   lifnr = p_ekpo-lifnr.
+              i_condiciones-porcent = equp-quote.
+            ENDSELECT.
+
+*Si no encuentra por proveedor, lo buscamos por centro suministrador.
+            IF sy-subrc <> 0.
+              SELECT *                        "#EC CI_ALL_FIELDS_NEEDED
+                FROM equp
+               WHERE qunum = equk-qunum
+                 AND bewrk = p_ekpo-werks.
+                i_condiciones-porcent = equp-quote.
+              ENDSELECT.
+              IF sy-subrc <> 0.
+                i_condiciones-porcent = 100.
+              ENDIF.
+            ENDIF.
+          ELSE.
+            i_condiciones-porcent = 100.
+          ENDIF.
+          IF borra = 'X'.
+            i_condicionesb = i_condiciones.
+            APPEND i_condicionesb.
+          ELSE.
+            MODIFY i_condiciones.
+          ENDIF.
+
+        ENDSELECT.
+      ELSE.
+        DELETE i_condiciones INDEX indice.
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT i_condicionesb.
+      i_condiciones = i_condicionesb.
+      APPEND i_condiciones.
+    ENDLOOP.
+
+*Localización de observaciones para segunda linea de detalle.
+    PERFORM observaciones USING p_ekpo-ebeln
+                                p_ekpo-ebelp
+                                p_ekpo-spras
+                         CHANGING p_ekpo-observaciones.
+    MODIFY p_ekpo.
+  ENDLOOP.
+ENDFORM.                               " datos_condicion
+*&---------------------------------------------------------------------*
+*&      Form  CONVERSION_UNIDADES
+*&---------------------------------------------------------------------*
+*   Conversión de unidades de medida de KONP de MARA                   *
+*----------------------------------------------------------------------*
+FORM conversion_unidades USING p_mater LIKE mara-matnr
+                             d_unid_ori LIKE bsim-meins
+                             d_unid_des LIKE bsim-meins.
+  CLEAR d_factor_conversion.
+  CALL FUNCTION 'MC_UNIT_CONVERSION'
+    EXPORTING
+      matnr                = p_mater
+      nach_meins           = d_unid_ori
+      von_meins            = d_unid_des
+    IMPORTING
+      umref                = d_factor_conversion
+    EXCEPTIONS
+      conversion_not_found = 1
+      material_not_found   = 2
+      nach_meins_missing   = 3
+      overflow             = 4
+      von_meins_missing    = 5
+      OTHERS               = 6.
+  IF  d_factor_conversion = 0.
+    d_factor_conversion = 1.
+  ENDIF.
+ENDFORM.                               " CONVERSION_UNIDADES
+*&---------------------------------------------------------------------*
+*&      Form  DATOS_LINEA
+*&---------------------------------------------------------------------*
+*   Calculo de datos definitivos para la linea de detalle              *
+*----------------------------------------------------------------------*
+FORM datos_linea.
+  REFRESH i_linea_det.
+  REFRESH i_bom.
+  LOOP AT i_ekpo WHERE matnr  = i_materiales-matnr AND werks =
+i_materiales-werks AND bprme = i_materiales-meins.
+    CLEAR i_linea_det.
+    MOVE-CORRESPONDING i_ekpo TO i_linea_det.
+    i_linea_det-lifnr = i_ekpo-lifnr.
+*Descripción del proveedor
+    SELECT SINGLE *                           "#EC CI_ALL_FIELDS_NEEDED
+      FROM lfa1 WHERE lifnr = i_ekpo-lifnr.
+    IF sy-subrc = 0.
+      i_linea_det-name1 = lfa1-name1.
+    ENDIF.
+    IF i_ekpo-loekz <> space.
+      i_linea_det-bloqueo = '*'.
+    ENDIF.
+    i_linea_det-observaciones = i_ekpo-observaciones.
+*Guardamos el contrato y la posicion para la búsqueda de los
+*subcontratados, pero estos datos no se imprimen.
+    i_linea_det-ebeln = i_ekpo-ebeln.
+    i_linea_det-bstyp = i_ekpo-bstyp.
+    i_linea_det-ebelp = i_ekpo-ebelp.
+    i_linea_det-pstyp = i_ekpo-pstyp.
+    i_linea_det-txz01 = i_ekpo-txz01.
+    i_linea_det-idnlf = i_ekpo-idnlf.
+    i_linea_det-matkl = i_ekpo-matkl.
+
+    LOOP AT i_condiciones WHERE lifnr = i_ekpo-lifnr
+                          AND   ebeln = i_ekpo-ebeln
+                          AND   ebelp = i_ekpo-ebelp.
+
+      IF i_condiciones-loekz <> space.
+        i_linea_det-bloqueo = '*'.
+      ENDIF.
+      i_linea_det-knumh = i_condiciones-knumh.
+      i_linea_det-fecha_inicial = i_condiciones-fecha_inicial.
+      i_linea_det-fecha_fin = i_condiciones-fecha_fin.
+      i_linea_det-modif = i_condiciones-modif.
+      i_linea_det-linea1 = i_condiciones-linea1.
+      i_linea_det-linea2 = i_condiciones-linea2.
+      i_linea_det-linea3 = i_condiciones-linea3.
+      i_linea_det-linea4 = i_condiciones-linea4.
+      i_linea_det-impuesto = i_condiciones-impuesto.
+      i_linea_det-reper = i_condiciones-reper.
+      i_linea_det-revno = i_condiciones-revno.
+      i_linea_det-lccp = i_condiciones-lccp.
+      i_linea_det-fechar = i_condiciones-fechar.
+      i_linea_det-serie = i_condiciones-serie.
+      i_linea_det-proyecto = i_condiciones-proyecto.
+
+      i_linea_det-banfn = i_condiciones-banfn.
+      i_linea_det-bnfpo = i_condiciones-bnfpo.
+      i_linea_det-zicms = i_condiciones-zicms.
+      i_linea_det-kosrt  = i_condiciones-kosrt.
+
+      i_linea_det-base = i_condiciones-base.
+      i_linea_det-moneda1 = i_condiciones-moneda1.
+      i_linea_det-moneda2 = i_condiciones-moneda1.
+      i_linea_det-username = i_condiciones-username.
+      i_linea_det-userdate = i_condiciones-userdate.
+      i_linea_det-utillaje = i_condiciones-utillaje.
+      i_linea_det-monuti = i_condiciones-monuti.
+*INCOTERMS
+      IF i_condiciones-inco1 <> space.
+        i_linea_det-inco1 = i_condiciones-inco1.
+        i_linea_det-inco2 = i_condiciones-inco2.
+      ELSE.
+        i_linea_det-inco1 = i_ekpo-inco1.
+        i_linea_det-inco2 = i_ekpo-inco2.
+      ENDIF.
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO ini
+      i_linea_det-indexed = i_condiciones-indexed.
+
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO fin
+*Si no se encontró el porcentaje, la fecha aparecerá en blanco.
+      i_linea_det-porcent = i_condiciones-porcent.
+      IF i_condiciones-fecha_porcent IS INITIAL
+         OR i_linea_det-porcent IS INITIAL.
+        i_linea_det-fecha_porcent = space.
+      ELSE.
+        WRITE i_condiciones-fecha_porcent TO
+                         i_linea_det-fecha_porcent DD/MM/YYYY.
+      ENDIF.
+*     IF i_condiciones-unidad_ped <> i_materiales-meins.
+*       PERFORM conversion_unidades USING i_materiales-matnr
+*                                         i_materiales-meins
+*                                         i_condiciones-unidad_ped.
+*     ELSE.
+      d_factor_conversion = 1.
+*     ENDIF.
+*Precio en la linea de detalle de acuerdo con las unidades del material
+*y del pedido.
+      i_linea_det-precio_prov = i_condiciones-precio_prov
+                                                  / d_factor_conversion.
+      i_linea_det-precio_efect = i_condiciones-precio_efect
+                                             / d_factor_conversion.
+*Estos precios están en la base del pedido bruto. Si ésta no es mil., se
+      i_linea_det-precio_fca = i_condiciones-precio_fca
+                                             / d_factor_conversion.
+      i_linea_det-precio_log = i_condiciones-precio_log
+                                              / d_factor_conversion.
+      i_linea_det-zlog = i_condiciones-zlog.
+*pasa.
+      IF i_condiciones-base <> 1000.
+        i_linea_det-precio_prov = ( i_linea_det-precio_prov /
+                                     i_condiciones-base ) * 1000.
+        i_linea_det-precio_efect = ( i_linea_det-precio_efect /
+                                     i_condiciones-base ) * 1000.
+        i_linea_det-precio_fca = ( i_linea_det-precio_fca /
+                                     i_condiciones-base ) * 1000.
+        i_linea_det-precio_log = ( i_linea_det-precio_log /
+                                     i_condiciones-base ) * 1000.
+
+        i_linea_det-base = 1000. "incidencia 11728
+      ENDIF.
+
+      i_linea_det-nivel = i_condiciones-nivel.
+      i_linea_det-repos = i_condiciones-repos.
+      APPEND i_linea_det.
+      IF i_ekpo-pstyp = '3'.
+        PERFORM funcion_bom.
+      ENDIF.
+    ENDLOOP.
+  ENDLOOP.
+ENDFORM.                               " DATOS_LINEA
+*&---------------------------------------------------------------------*
+*&      Form  IMPRIMIR_LINEA
+*&---------------------------------------------------------------------*
+*    Impresión de la linea de detalle                                  *
+*----------------------------------------------------------------------*
+FORM imprimir_linea.
+  SORT i_linea_det ASCENDING BY fecha_inicial DESCENDING lifnr.
+  LOOP AT i_linea_det.
+*   Modificacion de JPM para que salgan las lineas con motivos no
+*   existentes
+*    READ TABLE MOT WITH KEY KZUST = I_LINEA_DET-MODIF.
+*    IF SY-SUBRC = 0.
+    IF i_linea_det-modif IN motivo.
+      IF i_linea_det-precio_prov <> 0.
+*        RESALTAMOS LA LINEA
+        IF i_linea_det-fecha_inicial <= sy-datum AND
+           i_linea_det-fecha_fin >= sy-datum AND
+           i_linea_det-bloqueo = space.
+          FORMAT COLOR COL_GROUP INTENSIFIED ON.
+        ELSE.
+          FORMAT COLOR OFF INTENSIFIED ON.
+        ENDIF.
+        WRITE i_linea_det-fecha_inicial TO
+                                     d_fecha_ini_c DD/MM/YYYY.
+        d_flag2 = space.
+        IF i_linea_det-pstyp = '3' .
+          FORMAT COLOR 4 INTENSIFIED ON.
+          WRITE: /1 TEXT-031, 13 i_linea_det-txz01, 54 i_linea_det-idnlf.
+          FORMAT COLOR OFF INTENSIFIED ON.
+        ENDIF.
+        WRITE: /1(6) i_linea_det-lifnr, 8(30) i_linea_det-name1,
+                39 i_linea_det-nivel, 44 i_linea_det-fecha_inicial,
+                55 i_linea_det-modif, 59 i_linea_det-bloqueo,
+                62 i_linea_det-precio_prov CURRENCY i_linea_det-moneda1,
+                78 i_linea_det-moneda1,
+               85 i_linea_det-precio_efect CURRENCY i_linea_det-moneda2,
+               100 i_linea_det-moneda2, 104 i_linea_det-fecha_porcent,
+                115 i_linea_det-porcent NO-ZERO,
+                132 i_linea_det-username(15),
+           148 i_linea_det-userdate.
+        IF i_linea_det-fecha_fin = 0.
+          WRITE:  120 TEXT-220, 160 i_linea_det-base.
+
+        ELSE.
+          WRITE:  120 i_linea_det-fecha_fin DD/MM/YYYY,
+                     160 i_linea_det-base.
+        ENDIF.
+        .
+        FORMAT COLOR OFF INTENSIFIED ON.
+
+        IF i_linea_det-observaciones <> space.
+          d_flag2 = 'X'.
+          WRITE: /4 i_linea_det-observaciones.
+        ENDIF.
+        IF i_linea_det-utillaje <> 0.
+          WRITE: /52 TEXT-088, 62 i_linea_det-utillaje,
+                78 i_linea_det-monuti.
+        ENDIF.
+
+        IF i_linea_det-inco1 <> space OR i_linea_det-inco2 <> space.
+          IF d_flag2 = space .
+            WRITE: /1 ' '.
+          ENDIF.
+          WRITE: 100 i_linea_det-inco1, i_linea_det-inco2.
+        ENDIF.
+*Evita la impresión de la cabecera de datos en una 2ª pág. de ese Matnr.
+        d_flag = 'X'.
+        IF i_linea_det-pstyp = '3'.
+          PERFORM impresion_subcont.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.                               " IMPRIMIR_LINEA
+*&---------------------------------------------------------------------*
+*&      Form  CALCULO_PRECIOS
+*&---------------------------------------------------------------------*
+*  Se calcula el precio proveedor y el precio efectivo con los datos de*
+* KONP, operando con las diferentes clases de condiciones.
+*----------------------------------------------------------------------*
+FORM calculo_precios USING p_werks LIKE ekpo-werks
+                           p_lifnr  LIKE ekko-lifnr
+                           p_matnr  LIKE ekpo-matnr.
+  DATA: fca LIKE  konp-kbetr.
+  DATA: log LIKE  konp-kbetr.
+  DATA: t_konp                TYPE TABLE OF konp   WITH HEADER LINE.
+*El precio de proveedor es la cantidad con clase de condición Precio
+* Bruto PB00, que tenemos en i_condiciones-precio_prov menos un
+* porcentaje que viene con la clase de condición de ZICM
+  SELECT * FROM konp                          "#EC CI_ALL_FIELDS_NEEDED
+    WHERE knumh = i_condiciones-knumh
+                     AND kappl = c_kappl
+                     AND  kschl = c_clase_por
+                     AND loevm_ko = space. "Indicador de borrado
+  ENDSELECT.
+  IF sy-subrc = 0.
+    d_cantidad_por = ( i_condiciones-precio_prov * ( konp-kbetr / 10 )
+                     )  / 100.
+    i_condiciones-zicms = ( konp-kbetr / 10 ).
+    i_condiciones-precio_prov = i_condiciones-precio_prov
+                                         + d_cantidad_por.
+
+  ENDIF.
+*El precio efectivo es el precio de proveedor más todos los demás
+*importes de las clases de condición. Se tiene en cuenta que algunos
+*pueden ser porcentajes.
+  i_condiciones-precio_efect = i_condiciones-precio_prov.
+  i_condiciones-precio_log = i_condiciones-precio_prov.
+  SELECT * FROM konp                          "#EC CI_ALL_FIELDS_NEEDED
+     WHERE knumh = i_condiciones-knumh
+                     AND kappl = c_kappl
+                     AND kschl <> c_clase_por
+                     AND kschl <> c_clase_con
+                     AND kznep = ' '
+                     AND loevm_ko = space. "Indicador de borrado
+    IF konp-konwa <> '%'.
+* Se tiene en cuenta que diferentes condiciones de un mismo material
+* puedan venir en diferentes unidades ó base.
+      IF konp-kpein <> i_condiciones-base.
+* Se pone en la misma base que el precio bruto
+        IF konp-kpein <> 0.
+          konp-kbetr = konp-kbetr * ( i_condiciones-base / konp-kpein ).
+        ENDIF.
+      ENDIF.
+      IF konp-kmein <> i_condiciones-unidad_ped.
+        PERFORM  conversion_unidades USING p_matnr "material de i_ekpo
+                                           konp-kmein
+                                           i_condiciones-unidad_ped.
+        konp-kbetr = konp-kbetr / d_factor_conversion.
+      ENDIF.
+      IF konp-konwa = i_condiciones-moneda1."Si es la misma moneda
+        i_condiciones-precio_efect = i_condiciones-precio_efect
+                                   + konp-kbetr.
+*Si la moneda de la condición es distinta de la de precio bruto.
+      ELSE.
+        PERFORM conversion_moneda USING i_condiciones-fecha_inicial
+                                        konp-kbetr
+                                        konp-konwa
+                                        i_condiciones-moneda1.
+      ENDIF.
+    ELSE.                              "Si es porcentaje
+      d_cantidad_por = ( i_condiciones-precio_prov * ( konp-kbetr / 10 )
+                                                                )  / 100.
+      i_condiciones-precio_efect = i_condiciones-precio_efect
+                                           + d_cantidad_por.
+    ENDIF.
+  ENDSELECT.
+********************PRECIO FCA*************************************************************
+  fca = 0.
+  SELECT *                                    "#EC CI_ALL_FIELDS_NEEDED
+    FROM konp
+   WHERE knumh = i_condiciones-knumh
+     AND kappl = c_kappl
+     AND kschl = 'ZFCA'
+     AND loevm_ko = space.
+
+* Se tiene en cuenta que diferentes condiciones de un mismo material
+* puedan venir en diferentes unidades ó base.
+    IF konp-kpein <> i_condiciones-base.
+* Se pone en la misma base que el precio bruto
+      IF konp-kpein <> 0.
+        konp-kbetr = konp-kbetr * ( i_condiciones-base / konp-kpein ).
+      ENDIF.
+    ENDIF.
+    IF konp-kmein <> i_condiciones-unidad_ped.
+      PERFORM  conversion_unidades USING p_matnr "material de i_ekpo
+                                         konp-kmein
+                                         i_condiciones-unidad_ped.
+      konp-kbetr = konp-kbetr / d_factor_conversion.
+    ENDIF.
+    IF konp-konwa <> i_condiciones-moneda1.
+      PERFORM conversion_moneda USING i_condiciones-fecha_inicial
+                                      konp-kbetr
+                                      konp-konwa
+                                      i_condiciones-moneda1.
+    ENDIF.
+**********************************FCA*****************************
+*DEPENDIENDO DEL INCOTERM SUMAREMOS O NO
+
+    fca = konp-kbetr.
+  ENDSELECT.
+
+  i_condiciones-precio_fca =  i_condiciones-precio_prov - fca.
+*  i_condiciones-precio_fca = fca.
+  CASE   i_condiciones-inco1 .
+    WHEN 'DDP' OR 'DAP'.
+
+    WHEN 'EXW' OR 'FCA'.
+
+    WHEN OTHERS.
+
+  ENDCASE.
+
+  log = 0.
+*********************coste logistico
+  CALL FUNCTION 'Z_GET_LOG_PRICE'
+    EXPORTING
+      p_werks = p_werks
+      p_lifnr = p_lifnr
+      p_matnr = p_matnr
+      p_datab = sy-datum
+    TABLES
+*     T_A363  =
+*     T_KONH  =
+      t_konp  = t_konp
+    EXCEPTIONS
+      no_cond = 1
+      OTHERS  = 2.
+
+  IF sy-subrc = 0.
+    LOOP AT t_konp INTO konp.
+
+      IF konp-konwa <> '%'.
+* Se tiene en cuenta que diferentes condiciones de un mismo material
+* puedan venir en diferentes unidades ó base.
+        IF konp-kpein <> i_condiciones-base.
+* Se pone en la misma base que el precio bruto
+          IF konp-kpein <> 0.
+            konp-kbetr = konp-kbetr * ( i_condiciones-base / konp-kpein ).
+          ENDIF.
+        ENDIF.
+        IF konp-kmein <> i_condiciones-unidad_ped.
+          PERFORM  conversion_unidades USING p_matnr "material de i_ekpo
+                                             konp-kmein
+                                             i_condiciones-unidad_ped.
+          konp-kbetr = konp-kbetr / d_factor_conversion.
+        ENDIF.
+        IF konp-konwa = i_condiciones-moneda1."Si es la misma moneda
+
+*Si la moneda de la condición es distinta de la de precio bruto.
+        ELSE.
+          PERFORM conversion_moneda_c USING i_condiciones-fecha_inicial
+                                          konp-kbetr
+                                          konp-konwa
+                                          i_condiciones-moneda1.
+
+        ENDIF.
+        i_condiciones-zfle =  konp-kbetr.
+        i_condiciones-precio_log = i_condiciones-precio_log
+                                   + konp-kbetr.
+
+      ELSE.                              "Si es porcentaje
+        d_cantidad_por = ( i_condiciones-precio_prov * ( konp-kbetr / 10 )  )  / 100.
+        i_condiciones-zfle =  d_cantidad_por.
+        i_condiciones-precio_log = i_condiciones-precio_log  + d_cantidad_por.
+
+      ENDIF.
+      i_condiciones-zlog = '@7Q@'.
+    ENDLOOP.
+
+
+  ENDIF.
+
+
+*****************************************************************************************
+*UTILLAJE
+  SELECT *                                    "#EC CI_ALL_FIELDS_NEEDED
+    FROM konp WHERE knumh = i_condiciones-knumh
+     AND kappl = c_kappl
+     AND kschl = 'UTIL'
+     AND loevm_ko = space. "Indicador de borrado
+    i_condiciones-utillaje = konp-kbetr.
+    i_condiciones-monuti = konp-konwa.
+  ENDSELECT.
+*BUSCAMOS UTILLAJES
+  IF i_condiciones-banfn IS NOT INITIAL AND i_condiciones-utillaje = 0.
+    SELECT * FROM eban                        "#EC CI_ALL_FIELDS_NEEDED
+      WHERE banfn = i_condiciones-banfn.
+      IF eban-zcompra =  'US' AND eban-zrefpie = p_matnr.
+        SELECT * FROM eket                    "#EC CI_ALL_FIELDS_NEEDED
+          WHERE banfn = eban-banfn AND bnfpo = eban-bnfpo.
+          SELECT SINGLE * FROM ekpo           "#EC CI_ALL_FIELDS_NEEDED
+            WHERE ebeln = eket-ebeln AND ebelp =
+                                              eket-ebelp AND bstyp = 'F'.
+          IF sy-subrc = 0.
+            SELECT SINGLE *                   "#EC CI_ALL_FIELDS_NEEDED
+              FROM ekko WHERE "bukrs in s_bukrs and "mod IDE. PS:56344
+                     ebeln = ekpo-ebeln AND lifnr = i_condiciones-lifnr.
+            IF sy-subrc = 0.
+              IF ekpo-retpo = 'X'.
+                i_condiciones-utillaje = ( ekpo-netpr * ekpo-menge ) *
+                -1 + i_condiciones-utillaje.
+              ELSE.
+                i_condiciones-utillaje = ( ekpo-netpr * ekpo-menge )
+                +  i_condiciones-utillaje.
+              ENDIF.
+              i_condiciones-monuti = ekko-waers.
+            ENDIF.
+          ENDIF.
+        ENDSELECT.
+      ENDIF.
+    ENDSELECT.
+  ENDIF.
+ENDFORM.                               " CALCULO_PRECIOS
+*&---------------------------------------------------------------------*
+*&      Form  NIVEL_INGENIERIA
+*&---------------------------------------------------------------------*
+* Calculo del nivel de ingeniería al comienzo del periodo de validez de*
+* la condición.                                                        *
+*----------------------------------------------------------------------*
+FORM nivel_ingenieria.
+  IF i_condiciones-nivel = space.
+    CALL FUNCTION 'Z_PP_NIVEL_INGENIERIA'
+      EXPORTING
+        werks_imp = i_ekpo-werks
+        matnr_imp = i_ekpo-matnr
+        date_imp  = i_condiciones-fecha_inicial
+      IMPORTING
+        nivel     = i_condiciones-nivel
+      EXCEPTIONS
+        not_found = 1
+        OTHERS    = 2.
+
+    IF sy-subrc <> 0.
+*NI NO TIENE NIVEL LEEMOS EL DE LA SOLICITUD DE COMPRA
+      IF i_condiciones-banfn IS NOT INITIAL.
+        SELECT SINGLE *                       "#EC CI_ALL_FIELDS_NEEDED
+          FROM eban WHERE banfn = i_condiciones-banfn AND
+        bnfpo = i_condiciones-bnfpo.
+        IF sy-subrc = 0.
+          i_condiciones-nivel = eban-zznivel.
+        ENDIF.
+      ELSE.
+        i_condiciones-nivel = space.
+
+      ENDIF.
+
+    ENDIF.
+  ENDIF.
+ENDFORM.                               " NIVEL_INGENIERIA
+*&---------------------------------------------------------------------*
+*&      Form  USUARIO
+*&---------------------------------------------------------------------*
+* Busqueda en la tabla CDHDR del último usuario que ha cambiado la     *
+* condición.
+*----------------------------------------------------------------------*
+FORM usuario USING p_objectclas LIKE cdhdr-objectclas
+                   p_objectid TYPE c.
+  SELECT * FROM cdhdr                         "#EC CI_ALL_FIELDS_NEEDED
+    WHERE objectclas = p_objectclas
+                      AND   objectid   = p_objectid.
+  ENDSELECT.
+*Se toma el último usuario que ha cambiado la condición
+  IF sy-subrc = 0.
+
+*select single * from usr03 where bname = cdhdr-username.
+    SELECT SINGLE *                           "#EC CI_ALL_FIELDS_NEEDED
+      FROM usr21 WHERE bname = cdhdr-username.
+    SELECT SINGLE *                           "#EC CI_ALL_FIELDS_NEEDED
+      FROM adrp WHERE persnumber = usr21-persnumber.
+    IF sy-subrc = 0.
+
+      i_condiciones-username+1(15) = adrp-name_text(35).
+*    i_condiciones-username+15(20) = adpr-usr03-name2(20).
+*   i_condiciones-username = cdhdr-username.
+      i_condiciones-userdate = cdhdr-udate.
+    ELSE.
+      i_condiciones-username = cdhdr-username.
+      i_condiciones-userdate = cdhdr-udate.
+    ENDIF.
+  ENDIF.
+ENDFORM.                               " USUARIO
+
+*&---------------------------------------------------------------------*
+*&      Form  USUARIO2
+*&---------------------------------------------------------------------*
+* Busqueda en la tabla CDHDR del último usuario que ha cambiado la     *
+* condición siempre que la condicion no se haya cambiado automaticamente
+*----------------------------------------------------------------------*
+FORM usuario2 USING p_objectclas LIKE cdhdr-objectclas
+                   p_objectid TYPE c.
+  DATA: changenr_range(10)    TYPE n                 VALUE '50'.
+  DATA: changenr_min(10) TYPE n,
+        changenr_max(10) TYPE n.
+  DATA: nameg LIKE cdhdr-username.
+  DATA: fechag LIKE cdhdr-udate.
+
+  DATA: sw_relacionada(1).
+  DATA: wa_cdhdr  LIKE cdhdr,
+        wa_cdhdr2 LIKE cdhdr,
+        wa_konh   LIKE konh,
+        i_cdhdr   LIKE TABLE OF cdhdr WITH HEADER LINE.
+* Cogemos todos los cambios hechos sobre la fecha de fin de esa
+* condicion por orden de antiguedad y vemos cual es elprimero que no
+* esta relacionado con otro
+  CLEAR wa_cdhdr.
+  SELECT *                                    "#EC CI_ALL_FIELDS_NEEDED
+    FROM cdhdr
+   WHERE objectclas = p_objectclas
+     AND   objectid   = p_objectid
+ORDER BY udate DESCENDING utime DESCENDING.
+
+    CLEAR sw_relacionada.
+    SELECT *                                  "#EC CI_ALL_FIELDS_NEEDED
+      FROM cdpos
+     WHERE objectclas = p_objectclas
+       AND objectid   = p_objectid
+       AND changenr = cdhdr-changenr.
+
+*BUSCAMOS CLAVES QUE APORTEN UNA MODIFICACION DE PRECIO
+      IF cdpos-chngind = 'I'.
+*SI ES INSERTAR ES QUE ES
+        nameg = cdhdr-username.
+        fechag = cdhdr-udate.
+      ENDIF.
+*SI SE HA MODIFICADO EL PRECIO A CAPON.
+      IF cdpos-fname = 'KBETR' AND cdpos-chngind = 'U'.
+        nameg = cdhdr-username.
+        fechag = cdhdr-udate.
+      ENDIF.
+      IF nameg <> space.
+        EXIT.
+      ENDIF.
+    ENDSELECT.
+
+  ENDSELECT.
+  IF nameg = space.
+    SELECT SINGLE *                           "#EC CI_ALL_FIELDS_NEEDED
+      FROM cdhdr
+     WHERE objectclas = p_objectclas
+       AND objectid   = p_objectid.
+
+    IF sy-subrc = 0.
+*SI ES INSERTAR ES QUE ES
+      nameg = cdhdr-username.
+      fechag = cdhdr-udate.
+    ENDIF.
+  ENDIF.
+
+
+
+  IF nameg <> space.
+* O bien hemos encontrado el ultimo registro que no está relacionado con
+* otra modificacion o bien es el registro de creacion
+
+    CLEAR usr21.
+    CLEAR adrp.
+    SELECT SINGLE * FROM usr21                "#EC CI_ALL_FIELDS_NEEDED
+      WHERE bname = nameg.
+    SELECT SINGLE * FROM adrp                 "#EC CI_ALL_FIELDS_NEEDED
+      WHERE persnumber = usr21-persnumber.
+    IF sy-subrc = 0.
+*Mod Javi Arce.Dic09-PS78988.Mostrar nombre usuario modificador
+*      i_condiciones-username+1(15) = adrp-name_text(35).
+      i_condiciones-username = adrp-name_text(35).
+*End Mod Javi Arce.
+      i_condiciones-userdate = fechag.
+    ELSE.
+
+*Mod Javi Arce.Nov09-PS77056.Mostrar nombre usuario modificador
+      "Buscamos en la tabla de usuarios Borrados
+      SELECT SINGLE adrp~name_text
+       INTO i_condiciones-username
+      FROM adr7
+      JOIN adrp
+        ON adr7~persnumber = adrp~persnumber
+      WHERE uname           =  nameg.
+      IF sy-subrc <> 0.
+        i_condiciones-username = nameg.
+      ENDIF.
+*End Mod Javi Arce.Nov09
+      i_condiciones-userdate = fechag.
+    ENDIF.
+
+  ENDIF.
+ENDFORM.                               " USUARIO
+
+*&---------------------------------------------------------------------*
+*&      Form  OBSERVACIONES
+*&---------------------------------------------------------------------*
+*  Observaciones a novel de posición de la entrega                     *
+*----------------------------------------------------------------------*
+FORM observaciones USING p_ebeln LIKE ekpo-ebeln
+                         p_ebelp LIKE ekpo-ebelp
+                         p_spras LIKE ekko-spras
+                  CHANGING p_observaciones LIKE tline-tdline.
+  CONCATENATE p_ebeln p_ebelp INTO d_name_obj .
+  CALL FUNCTION 'READ_TEXT'
+    EXPORTING
+      client                  = sy-mandt
+      id                      = c_id_text
+      language                = p_spras
+      name                    = d_name_obj
+      object                  = c_obj_text
+*     ARCHIVE_HANDLE          = 0
+    IMPORTING
+      header                  = r_header
+    TABLES
+      lines                   = i_lines
+    EXCEPTIONS
+      id                      = 1
+      language                = 2
+      name                    = 3
+      not_found               = 4
+      object                  = 5
+      reference_check         = 6
+      wrong_access_to_archive = 7
+      OTHERS                  = 8.
+  IF sy-subrc = 0.
+    READ TABLE i_lines INDEX 1.
+    p_observaciones = i_lines-tdline.
+  ELSE.
+    p_observaciones = ' '.
+  ENDIF.
+
+
+ENDFORM.                               " OBSERVACIONES
+*&---------------------------------------------------------------------*
+*&      Form  CONVERSION_MONEDA
+*&---------------------------------------------------------------------*
+* Conversión de la moneda de la condición a la moneda de precio bruto. *
+* Se aplica el cambio para la fecha inicial de la condición.           *
+*----------------------------------------------------------------------*
+FORM conversion_moneda USING p_fecha LIKE sy-datum
+                             p_cant LIKE konp-kbetr
+                             p_mon_ex LIKE konp-konwa
+                             p_mon_lo LIKE konp-konwa.
+  CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+    EXPORTING
+      date             = p_fecha
+      foreign_amount   = p_cant
+      foreign_currency = p_mon_ex
+      local_currency   = p_mon_lo
+*     RATE             = 0
+      type_of_rate     = 'M'
+    IMPORTING
+*     exchange_rate    = d_tipo_cambio
+      local_amount     = d_precio_aux
+    EXCEPTIONS
+      no_rate_found    = 1
+      overflow         = 2
+      no_factors_found = 3
+      no_spread_found  = 4
+      OTHERS           = 5.
+  IF sy-subrc = 0.
+    i_condiciones-precio_efect = i_condiciones-precio_efect
+                                 + d_precio_aux.
+  ENDIF.
+ENDFORM.                               " CONVERSION_MONEDA
+*&---------------------------------------------------------------------*
+*&      Form  DATOS_CONDICION_CER
+*&---------------------------------------------------------------------*
+*   Datos de la linea de detalle del listado para pedidos
+*----------------------------------------------------------------------*
+FORM datos_condicion_cer TABLES p_ekpo STRUCTURE i_ekpo.
+  LOOP AT p_ekpo WHERE bstyp = c_bstyp_pd.
+    CLEAR i_condiciones.
+*Se toma el precio neto y sus datos de moneda y base
+    SELECT * FROM konv                        "#EC CI_ALL_FIELDS_NEEDED
+      WHERE knumv = p_ekpo-knumv  "una entrada
+        AND   kposn = p_ekpo-ebelp
+        AND   ( kschl = c_clase_ped OR kschl = c_clase_con )
+        AND   kappl = 'M'.
+      i_condiciones-ebeln = p_ekpo-ebeln.
+      i_condiciones-ebelp = p_ekpo-ebelp.
+      i_condiciones-lifnr = p_ekpo-lifnr.
+      i_condiciones-modif = 'NN'.
+      i_condiciones-fecha_inicial = p_ekpo-bedat.
+      i_condiciones-precio_prov = konv-kbetr.
+      i_condiciones-base = konv-kpein.
+      i_condiciones-moneda1 = konv-waers.
+      i_condiciones-knumh = p_ekpo-knumv.
+    ENDSELECT.
+*El precio de proveedor es la cantidad con clase de condición Precio
+* Bruto PB00, que tenemos en i_condiciones-precio_prov menos un
+* porcentaje que viene con la clase de condición de ZICM
+    SELECT *                                  "#EC CI_ALL_FIELDS_NEEDED
+      FROM konv
+     WHERE knumv = p_ekpo-knumv  "una entrada
+       AND kposn = p_ekpo-ebelp
+       AND kschl = c_clase_por
+       AND kappl = 'M'.
+    ENDSELECT.
+    IF sy-subrc = 0.
+      d_cantidad_por = ( i_condiciones-precio_prov * ( konv-kbetr / 10 )
+                                                                )  / 100.
+      i_condiciones-zicms = ( konv-kbetr / 10 ).
+
+      i_condiciones-precio_prov = i_condiciones-precio_prov
+                                           + d_cantidad_por.
+    ENDIF.
+*El precio efectivo es el precio de proveedor más todos los demás
+*importes de las clases de condición. Se tiene en cuenta que algunos
+*pueden ser porcentajes.
+    i_condiciones-precio_efect = i_condiciones-precio_prov.
+    SELECT *                                  "#EC CI_ALL_FIELDS_NEEDED
+      FROM konv
+      WHERE knumv = p_ekpo-knumv  "una entrada
+        AND   kposn = p_ekpo-ebelp
+        AND   kschl <> c_clase_por
+        AND   kschl <> c_clase_ped
+        AND   kschl <>  c_clase_con
+        AND   kstat = ' '
+        AND   kbetr <> 0
+        AND   kpein <> 0
+        AND   kappl = 'M'.
+      IF konv-krech <> 'A'.            "A es porcentaje
+* Se tiene en cuenta que diferentes condiciones de un mismo material
+* puedan venir en diferentes unidades ó base.
+        IF konv-kpein <> i_condiciones-base.
+* Se pone en la misma base que el precio bruto
+          konv-kbetr = konv-kbetr * ( i_condiciones-base / konv-kpein ).
+        ENDIF.
+        IF konv-kmein <> i_condiciones-unidad_ped.
+          PERFORM  conversion_unidades USING p_ekpo-matnr
+                                             konv-kmein
+                                             i_condiciones-unidad_ped.
+          konv-kbetr = konv-kbetr / d_factor_conversion.
+        ENDIF.
+        IF konv-waers = i_condiciones-moneda1."Si es la misma moneda
+          i_condiciones-precio_efect = i_condiciones-precio_efect
+                                     + konv-kbetr.
+*Si la moneda de la condición es distinta de la de precio bruto.
+        ELSE.
+          PERFORM conversion_moneda USING i_condiciones-fecha_inicial
+                                          konv-kbetr
+                                          konv-waers
+                                          i_condiciones-moneda1.
+        ENDIF.
+      ELSE.                            "Si es porcentaje
+        d_cantidad_por = ( i_condiciones-precio_prov *
+                               ( konv-kbetr / 10 ) )  / 100.
+        i_condiciones-precio_efect = i_condiciones-precio_efect
+                                             + d_cantidad_por.
+      ENDIF.
+    ENDSELECT.
+    IF c_user = 'X'.
+*      PERFORM USUARIO USING C_OBJECTCLAS_PED
+      PERFORM usuario2 USING c_objectclas_ped
+                          i_condiciones-ebeln.
+    ENDIF.
+
+*Datos del porcentaje de participación
+    SELECT SINGLE * FROM equk WHERE matnr = p_ekpo-matnr
+                              AND   werks = p_ekpo-werks
+                           AND   bdatu >= i_condiciones-fecha_inicial
+*antes fecha inicio
+                           AND   vdatu <= i_condiciones-fecha_fin.
+    IF sy-subrc = 0.
+      i_condiciones-fecha_porcent = equk-vdatu.
+      SELECT *                                "#EC CI_ALL_FIELDS_NEEDED
+        FROM equp
+       WHERE qunum = equk-qunum
+         AND   lifnr = p_ekpo-lifnr.
+        i_condiciones-porcent = equp-quote.
+      ENDSELECT.
+*Si no encuentra por proveedor, lo buscamos por centro suministrador.
+      IF sy-subrc <> 0.
+        SELECT * FROM equp                    "#EC CI_ALL_FIELDS_NEEDED
+          WHERE qunum = equk-qunum
+                           AND   bewrk = p_ekpo-werks.
+          i_condiciones-porcent = equp-quote.
+        ENDSELECT.
+      ENDIF.
+    ENDIF.
+    PERFORM observaciones2 USING p_ekpo-ebeln
+                                p_ekpo-ebelp
+                                p_ekpo-spras
+                         CHANGING p_ekpo-observaciones.
+
+    APPEND i_condiciones.
+*Localización de observaciones para segunda linea de detalle.
+    PERFORM observaciones USING p_ekpo-ebeln
+                                p_ekpo-ebelp
+                                p_ekpo-spras
+                         CHANGING p_ekpo-observaciones.
+    MODIFY p_ekpo.
+  ENDLOOP.
+ENDFORM.                               " DATOS_CONDICION_CER
+*&---------------------------------------------------------------------*
+*&      Form  MATERIAL_SUBCONT
+*&---------------------------------------------------------------------*
+* Se buscan los datos de compra de los materiales subcontratados.
+*----------------------------------------------------------------------*
+FORM material_subcont.
+  REFRESH i_ekpo_sub.
+*Se obtienen los pedidos de los materiales subcontratados, y se añaden a
+* i_ekpo_sub.
+  SORT i_bom BY matnr.
+  LOOP AT i_bom.
+    AT NEW matnr.
+      SELECT *                                "#EC CI_ALL_FIELDS_NEEDED
+        FROM ekpo
+       WHERE matnr = i_bom-matnr
+         AND werks = i_materiales-werks
+         AND bstyp <> 'A'.
+        CLEAR i_ekpo_sub.
+        i_ekpo_sub-ebeln = ekpo-ebeln.
+        i_ekpo_sub-ebelp = ekpo-ebelp.
+        i_ekpo_sub-loekz = ekpo-loekz.
+        i_ekpo_sub-matnr = ekpo-matnr.
+        i_ekpo_sub-werks = ekpo-werks.
+        SELECT SINGLE *                       "#EC CI_ALL_FIELDS_NEEDED
+          FROM ekko WHERE ebeln = ekpo-ebeln
+                                      AND ( bstyp = c_bstyp
+                                         OR bstyp = c_bstyp_pd ).
+        IF sy-subrc <> 0.
+          DELETE i_ekpo_sub WHERE ebeln = ekpo-ebeln.
+        ELSE.
+          i_ekpo_sub-lifnr = ekko-lifnr.
+          i_ekpo_sub-waers = ekko-waers.
+          i_ekpo_sub-inco1 = ekko-inco1. "Copiamos los incoterms de la
+          i_ekpo_sub-inco2 = ekko-inco2. "Cabecera.
+          i_ekpo_sub-ekgrp = ekko-ekgrp.
+          i_ekpo_sub-spras = ekko-spras.
+          i_ekpo_sub-bstyp = ekko-bstyp.
+          i_ekpo_sub-knumv = ekko-knumv.
+          i_ekpo_sub-bedat = ekko-bedat.
+        ENDIF.
+        APPEND i_ekpo_sub.
+      ENDSELECT.
+      IF sy-subrc <> 0.
+        i_ekpo_sub-matnr =  i_bom-matnr.
+        i_ekpo_sub-werks = i_materiales-werks.
+        APPEND i_ekpo_sub.
+      ENDIF.
+    ENDAT.
+  ENDLOOP.
+  PERFORM datos_condicion TABLES i_ekpo_sub.  "Planes de entrega : L.
+  PERFORM datos_condicion_cer TABLES i_ekpo_sub.    "Pedidos tipo F.
+ENDFORM.                               " MATERIAL_SUBCONT
+*&---------------------------------------------------------------------*
+*&      Form  FUNCION_BOM
+*&---------------------------------------------------------------------*
+* Se obtienen la lista de materiales
+*----------------------------------------------------------------------*
+FORM funcion_bom.
+  IF i_linea_det-fecha_fin > sy-datum.
+    fecha = sy-datum.
+  ELSE.
+    fecha = i_linea_det-fecha_fin.
+  ENDIF.
+
+  CALL FUNCTION 'CS_BOM_EXPL_MAT_V2'
+    EXPORTING
+      capid                 = c_pp01
+      datuv                 = fecha
+      emeng                 = 1
+*     mktls                 = 'X'
+*     mehrs                 = 'X'
+*     mmory                 = '1'
+      mtnrv                 = i_materiales-matnr
+      stlal                 = '01'
+      werks                 = i_materiales-werks
+    IMPORTING
+      topmat                = r_topmat
+*     DSTST                 =
+    TABLES
+      stb                   = i_stb
+      matcat                = i_matcat
+    EXCEPTIONS
+      alt_not_found         = 1
+      call_invalid          = 2
+      material_not_found    = 3
+      missing_authorization = 4
+      no_bom_found          = 5
+      no_plant_data         = 6
+      no_suitable_bom_found = 7
+      conversion_error      = 8
+      OTHERS                = 9.
+  IF sy-subrc = 0.
+*Se añade los materiales de la lista de materiales a I_bom.
+    CLEAR i_bom.
+    i_bom-ebeln = i_ekpo-ebeln.
+    i_bom-ebelp = i_ekpo-ebelp.
+    i_bom-fecha = i_linea_det-fecha_inicial.
+    i_bom-stlnr = r_topmat-stlnr.
+    LOOP AT i_stb.
+      i_bom-matnr = i_stb-idnrk.
+      APPEND i_bom.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.                               " FUNCION_BOM
+*&---------------------------------------------------------------------*
+*&      Form  IMPRESION_SUBCONT
+*&---------------------------------------------------------------------*
+* Busqueda e impresion de los materiales subcontratados.
+*----------------------------------------------------------------------*
+FORM impresion_subcont.
+  REFRESH i_linea_sub.
+*Se busca en i_bon el/los materiales subcontratados.
+  LOOP AT i_bom WHERE ebeln = i_linea_det-ebeln
+                  AND ebelp = i_linea_det-ebelp
+                  AND fecha = i_linea_det-fecha_inicial.
+*   at new matnr.
+
+    LOOP AT i_ekpo_sub WHERE matnr = i_bom-matnr.
+*        loop at i_condiciones where ebeln = i_ekpo_sub-ebeln
+*                                and ebelp = i_ekpo_sub-ebelp.
+      CLEAR i_linea_sub.
+      i_linea_sub-matnr = i_bom-matnr.
+      i_linea_sub-lifnr = i_ekpo_sub-lifnr.
+*Descripción del proveedor
+      SELECT SINGLE * FROM lfa1               "#EC CI_ALL_FIELDS_NEEDED
+        WHERE lifnr = i_ekpo_sub-lifnr.
+      IF sy-subrc = 0.
+        i_linea_sub-name1 = lfa1-name1.
+      ENDIF.
+      IF i_ekpo_sub-loekz <> space.
+        i_linea_sub-bloqueo = '*'.
+      ENDIF.
+      i_linea_sub-inco1 = i_ekpo_sub-inco1.
+      i_linea_sub-inco2 = i_ekpo_sub-inco2.
+      i_linea_sub-observaciones = i_ekpo_sub-observaciones.
+      SORT i_linea_sub BY fecha_fin fecha_inicial.
+      LOOP AT i_condiciones WHERE lifnr = i_ekpo_sub-lifnr
+                            AND   ebeln = i_ekpo_sub-ebeln
+                            AND   ebelp = i_ekpo_sub-ebelp.
+        i_linea_sub-fecha_inicial = i_condiciones-fecha_inicial.
+        i_linea_sub-fecha_fin = i_condiciones-fecha_fin.
+        i_linea_sub-modif = i_condiciones-modif.
+        i_linea_sub-moneda1 = i_condiciones-moneda1.
+        i_linea_sub-moneda2 = i_condiciones-moneda1.
+        i_linea_sub-username = i_condiciones-username.
+        i_linea_sub-userdate = i_condiciones-userdate.
+*Si no se encontró el porcentaje, la fecha aparecerá en blanco.
+        i_linea_sub-porcent = i_condiciones-porcent.
+        IF i_condiciones-fecha_porcent IS INITIAL
+           OR i_linea_sub-porcent IS INITIAL.
+          i_linea_sub-fecha_porcent = space.
+        ELSE.
+          WRITE i_condiciones-fecha_porcent TO
+                           i_linea_sub-fecha_porcent DD/MM/YYYY.
+        ENDIF.
+        IF i_condiciones-unidad_ped <> i_materiales-meins.
+          i_materiales-meins = i_condiciones-unidad_ped.
+        ENDIF.
+*         PERFORM conversion_unidades USING i_materiales-matnr
+*                                           i_materiales-meins
+*                                          i_condiciones-unidad_ped.
+*       ELSE.
+        d_factor_conversion = 1.
+*       ENDIF.
+*Precio en la linea de detalle de acuerdo con las unidades del material
+*y del pedido.
+        i_linea_sub-precio_prov = i_condiciones-precio_prov
+                                              / d_factor_conversion.
+        i_linea_sub-precio_efect = i_condiciones-precio_efect
+                                              / d_factor_conversion.
+*Estos precios están en la base del pedido bruto. Si ésta no es mil., se
+*pasa.
+        IF i_condiciones-base <> 1000.
+          i_linea_sub-precio_prov = ( i_linea_sub-precio_prov /
+                                       i_condiciones-base ) * 1000.
+          i_linea_sub-precio_efect = ( i_linea_sub-precio_efect /
+                                       i_condiciones-base ) * 1000.
+
+        ENDIF.
+        i_linea_sub-nivel = i_condiciones-nivel.
+        APPEND i_linea_sub.
+      ENDLOOP.
+
+*si el material es de fabricacion
+      IF i_ekpo_sub-lifnr = 0.
+        APPEND i_linea_sub.
+      ENDIF.
+
+    ENDLOOP.
+*    endat.
+  ENDLOOP.
+  PERFORM impresion_detalle_sub.
+ENDFORM.                               " IMPRESION_SUBCONT
+*&---------------------------------------------------------------------*
+*&      Form  IMPRESION_DETALLE_SUB
+*&---------------------------------------------------------------------*
+* Imnpresión de la linea de detalle de la subcontratación.
+*----------------------------------------------------------------------*
+FORM impresion_detalle_sub.
+  SORT i_linea_sub ASCENDING BY matnr DESCENDING fecha_inicial.
+  FORMAT INTENSIFIED OFF.
+  LOOP AT i_linea_sub.
+    AT NEW matnr.
+      SKIP.
+      WRITE: /5(18) i_linea_sub-matnr.
+*Descripción del material en MAKT
+      SELECT SINGLE *                         "#EC CI_ALL_FIELDS_NEEDED
+        FROM makt
+       WHERE matnr = i_linea_sub-matnr
+         AND spras = sy-langu.
+      IF sy-subrc = 0.
+        WRITE: 30(40) makt-maktx.
+      ENDIF.
+      NEW-LINE.
+      ULINE AT 5(18).
+      ULINE AT 30(40).
+    ENDAT.
+    d_flag2 = space.
+    WRITE i_linea_sub-fecha_inicial TO
+                                 d_fecha_ini_c DD/MM/YYYY.
+    WRITE: /5(5) i_linea_sub-lifnr, 11(25) i_linea_sub-name1,
+            37 i_linea_sub-nivel, 42 i_linea_sub-fecha_inicial,
+            53 i_linea_sub-modif, 57 i_linea_sub-bloqueo,
+            60 i_linea_sub-precio_prov CURRENCY i_linea_sub-moneda1,
+            76 i_linea_sub-moneda1,
+            83 i_linea_sub-precio_efect CURRENCY i_linea_sub-moneda2,
+            98 i_linea_sub-moneda2, 102 i_linea_sub-fecha_porcent,
+            113 i_linea_sub-porcent NO-ZERO,
+            130 i_linea_sub-username(15),
+        148 i_linea_sub-userdate, 118 i_linea_sub-fecha_fin DD/MM/YYYY.
+    IF i_linea_sub-observaciones <> space.
+      d_flag2 = 'X'.
+      WRITE: /4 i_linea_sub-observaciones.
+    ENDIF.
+    IF i_linea_sub-inco1 <> space OR i_linea_sub-inco2 <> space.
+      IF d_flag2 = space.
+        WRITE: /1 ' '.
+      ENDIF.
+      WRITE: 98 i_linea_sub-inco1, i_linea_sub-inco2.
+    ENDIF.
+  ENDLOOP.
+  FORMAT INTENSIFIED ON.
+ENDFORM.                               " IMPRESION_DETALLE_SUB
+
+*&---------------------------------------------------------------------*
+*&      Form  PASAR_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM pasar_alv.
+
+  SORT i_linea_det ASCENDING BY fecha_inicial DESCENDING lifnr.
+  LOOP AT i_linea_det.
+    IF i_linea_det-fechar <> 0.
+      i_linea_det-fecha_inicial = i_linea_det-fechar.
+      MODIFY i_linea_det.
+    ENDIF.
+
+*    READ TABLE MOT WITH KEY KZUST = I_LINEA_DET-MODIF.
+*    IF SY-SUBRC = 0.
+    IF i_linea_det-modif IN motivo.
+      IF i_linea_det-precio_prov <> 0 OR ( i_linea_det-precio_prov = 0 AND i_linea_det-repos = ' ' AND emrf = 'X' ).
+        CLEAR i_alv.
+        REFRESH i_alv-color.
+
+        MOVE-CORRESPONDING i_linea_det TO i_alv.
+
+        IF i_linea_det-proyecto = 'X'.
+          i_alv-serie = 'P'.
+        ELSE.
+          i_alv-serie = 'S'.
+        ENDIF.
+
+*       pasamos los datos de la cabecera
+        MOVE-CORRESPONDING i_materiales TO i_alv.
+*       MOD e sobreescribe el contrato
+        i_alv-ebeln = i_linea_det-ebeln.
+*       FIN MOD
+*       cogemos la descripcion
+*        SELECT SINGLE * FROM makt WHERE matnr = i_alv-matnr
+*                                  AND spras = sy-langu.
+*        IF sy-subrc = 0.
+*          i_alv-denominacion = makt-maktx.
+*        ENDIF.
+*Mod.Javi Arce.Sep15.PS372617.Denominación de material
+*        i_alv-denominacion = i_materiales-descripcion.
+        READ TABLE i_ekpo
+        WITH KEY ebeln = i_alv-ebeln
+                 ebelp = i_alv-ebelp.
+        IF sy-subrc = 0.
+          i_alv-denominacion = i_ekpo-txz01.
+        ELSE.
+          i_alv-denominacion = i_materiales-descripcion.
+        ENDIF.
+*End Mod.Javi Arce.Sep15.
+*       miramos el color
+        IF i_linea_det-fecha_inicial <= sy-datum AND
+                   i_linea_det-fecha_fin >= sy-datum AND
+                   i_linea_det-bloqueo = space.
+*activo
+          i_alv-color[] = it_specialcol.
+        ELSE.
+
+          REFRESH i_alv-color.
+
+          IF  i_linea_det-bloqueo <> space.
+            LOOP AT it_specialcol INTO ls_specialcol.
+*bloqueado, ponemos el precio en color
+              IF ls_specialcol-fieldname(3) = 'PRE'.
+                ls_specialcol-color-col = 6.
+
+                APPEND ls_specialcol TO i_alv-color.
+              ENDIF.
+            ENDLOOP.
+          ELSE.
+            REFRESH i_alv-color.
+          ENDIF.
+        ENDIF.
+
+
+
+        IF ahorro = 'X'.
+
+          syaux = sy-tabix + 1.
+          READ TABLE i_linea_det INDEX syaux.
+          IF sy-subrc = 0.
+            i_alv-ahorro = ( i_linea_det-precio_efect -
+                              i_alv-precio_efect ) / i_alv-base.
+          ELSE.
+            i_alv-ahorro = 0.
+          ENDIF.
+
+          can = 0.
+          SELECT * FROM ekbe                  "#EC CI_ALL_FIELDS_NEEDED
+                   WHERE ebeln = i_alv-ebeln AND ebelp = i_alv-ebelp
+                     AND budat >= i_alv-fecha_inicial AND bewtp = 'E'.
+            IF ekbe-shkzg = 'S'.
+              can =  can + ekbe-menge.
+            ELSE.
+              can =  can - ekbe-menge.
+            ENDIF.
+          ENDSELECT.
+
+          i_alv-importe = i_alv-ahorro * can.
+*         ahorro en moneda local
+          IF i_alv-moneda1 <> t001-waers.
+            CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+              EXPORTING
+                date             = i_alv-fecha_inicial
+                foreign_amount   = i_alv-importe
+                foreign_currency = i_alv-moneda1
+                local_currency   = t001-waers
+                type_of_rate     = 'M'
+              IMPORTING
+                local_amount     = i_alv-importe2
+              EXCEPTIONS
+                no_rate_found    = 1
+                overflow         = 2
+                no_factors_found = 3
+                no_spread_found  = 4
+                OTHERS           = 5.
+
+            IF sy-subrc <> 0.
+              i_alv-importe2 = i_alv-importe.
+            ENDIF.
+          ENDIF.
+
+          i_alv-cantid =  can.
+
+        ENDIF.
+
+*       SOLICITUD DE COMPRA
+        IF i_alv-bstyp = 'F'.
+          SELECT SINGLE *                     "#EC CI_ALL_FIELDS_NEEDED
+            FROM eket
+           WHERE ebeln = i_alv-ebeln
+             AND ebelp = i_alv-ebelp.
+          IF sy-subrc = 0.
+            i_alv-banfn = eket-banfn.
+            i_alv-bnfpo = eket-bnfpo.
+          ENDIF.
+        ENDIF.
+
+        IF i_alv-banfn <> ' ' AND i_alv-linea1 = space.
+          SELECT SINGLE * FROM eban           "#EC CI_ALL_FIELDS_NEEDED
+            WHERE banfn = i_alv-banfn AND bnfpo =
+                                                              i_alv-bnfpo.
+          IF sy-subrc = 0.
+            value = eban-zcompra.
+
+            CALL FUNCTION 'C_DIC_DOMAIN_VALUE_TEXT_READ'
+              EXPORTING
+                name      = 'ZCOMPRA'
+                spras     = sy-langu
+                value     = value
+              IMPORTING
+                text      = text
+              EXCEPTIONS
+                not_found = 7.
+            IF sy-subrc <> 7.
+
+              IF i_alv-bstyp = 'F'.
+                CONCATENATE TEXT-220 text INTO i_alv-linea1
+                   SEPARATED BY space.
+                CONDENSE i_alv-linea1.
+              ELSE.
+                CONCATENATE TEXT-221 text INTO i_alv-linea1
+                   SEPARATED BY space.
+                CONDENSE i_alv-linea1.
+              ENDIF.
+
+            ENDIF.
+          ENDIF.
+        ENDIF.
+        APPEND i_alv.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.                    " PASAR_ALV
+
+*&---------------------------------------------------------------------*
+*&      Form  MOSTRAR_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM mostrar_alv.
+  PERFORM cargar_cabecera.
+  PERFORM ordenar.
+  MOVE 'X' TO is_layout-colwidth_optimize.
+*  MOVE 'X' TO IS_LAYOUT-ZEBRA.
+  MOVE 'COLOR' TO is_layout-coltab_fieldname.
+* MOSTRAMOS EL ALV
+  PERFORM reuse_alv.
+ENDFORM.                    " MOSTRAR_ALV
+
+*&---------------------------------------------------------------------*
+*&      Form  CARGAR_CABECERA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM cargar_cabecera.
+  DATA: wa_fieldcat TYPE slis_fieldcat_alv.
+  REFRESH it_fieldcat.
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_program_name     = 'ZPUARCOS'
+      i_internal_tabname = 'I_ALV'
+      i_structure_name   = 'ZPFP_ALV'
+    CHANGING
+      ct_fieldcat        = it_fieldcat[].
+
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'ZPLP1'.
+  wa_fieldcat-ctabname = 'I_ALV'.
+  wa_fieldcat-cfieldname = 'WAERS'.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'NIVEL'.
+  wa_fieldcat-seltext_s = TEXT-107.
+  wa_fieldcat-seltext_m = TEXT-107.
+  wa_fieldcat-seltext_l = TEXT-107.
+  wa_fieldcat-reptext_ddic = TEXT-107.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'FECHA_INICIAL'.
+  wa_fieldcat-seltext_s = TEXT-102.
+  wa_fieldcat-seltext_m = TEXT-102.
+  wa_fieldcat-seltext_l = TEXT-102.
+  wa_fieldcat-reptext_ddic = TEXT-102.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'FECHA_FIN'.
+  wa_fieldcat-seltext_s = TEXT-100.
+  wa_fieldcat-seltext_m = TEXT-100.
+  wa_fieldcat-seltext_l = TEXT-100.
+  wa_fieldcat-reptext_ddic = TEXT-100.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'PRECIO_EFECT'.
+  wa_fieldcat-seltext_s = TEXT-103.
+  wa_fieldcat-seltext_m = TEXT-103.
+  wa_fieldcat-seltext_l = TEXT-103.
+  wa_fieldcat-reptext_ddic = TEXT-103.
+  wa_fieldcat-ctabname = 'I_ALV'.
+  wa_fieldcat-cfieldname = 'MONEDA1'.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'PRECIO_PROV'.
+  wa_fieldcat-seltext_s = TEXT-104.
+  wa_fieldcat-seltext_m = TEXT-104.
+  wa_fieldcat-seltext_l = TEXT-104.
+  wa_fieldcat-reptext_ddic = TEXT-104.
+  wa_fieldcat-ctabname = 'I_ALV'.
+  wa_fieldcat-cfieldname = 'MONEDA1'.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                           WITH KEY fieldname = 'PRECIO_FCA'.
+  wa_fieldcat-ref_tabname = 'ZPFP_ALV'.
+  wa_fieldcat-ref_fieldname = 'PRECIO_FCA'.
+  wa_fieldcat-seltext_s = TEXT-205.
+  wa_fieldcat-seltext_m = TEXT-205.
+  wa_fieldcat-seltext_l = TEXT-205.
+  wa_fieldcat-reptext_ddic = TEXT-205.
+
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                            WITH KEY fieldname = 'PRECIO_LOG'.
+  wa_fieldcat-ref_tabname = 'ZPFP_ALV'.
+  wa_fieldcat-ref_fieldname = 'PRECIO_LOG'.
+  wa_fieldcat-seltext_s = TEXT-215.
+  wa_fieldcat-seltext_m = TEXT-215.
+  wa_fieldcat-seltext_l = TEXT-215.
+  wa_fieldcat-reptext_ddic = TEXT-215.
+
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'USERNAME'.
+  wa_fieldcat-seltext_s = TEXT-105.
+  wa_fieldcat-seltext_m = TEXT-105.
+  wa_fieldcat-seltext_l = TEXT-105.
+  wa_fieldcat-reptext_ddic = TEXT-105.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'USERDATE'.
+  wa_fieldcat-seltext_s = TEXT-106.
+  wa_fieldcat-seltext_m = TEXT-106.
+  wa_fieldcat-seltext_l = TEXT-106.
+  wa_fieldcat-reptext_ddic = TEXT-106.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'BANFN'.
+  wa_fieldcat-hotspot = 'X'.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO ini
+  READ TABLE it_fieldcat INTO wa_fieldcat
+                         WITH KEY fieldname = 'INDEXED'.
+  wa_fieldcat-seltext_s = TEXT-108.
+  wa_fieldcat-seltext_m = TEXT-108.
+  wa_fieldcat-seltext_l = TEXT-108.
+  wa_fieldcat-reptext_ddic = TEXT-108.
+  MODIFY it_fieldcat FROM wa_fieldcat INDEX sy-tabix.
+*28/06/2022 INC0578242 - AD añadir campo INDEXADO fin
+
+
+
+
+ENDFORM.                    " CARGAR_CABECERA
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  STATUS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM status USING ftip_excl TYPE kkblo_t_extab .
+  SET PF-STATUS 'STANDARD_FULLSCREEN'.               "ADDED BY TUSHAR PAWAR (STATUS REPLACED BY STANDARD_FULLSCREEN)
+ENDFORM.                    "status
+
+
+*&---------------------------------------------------------------------*
+*&      Form  USER_COMMAND
+*&---------------------------------------------------------------------*
+
+FORM user_command USING r_ucomm LIKE sy-ucomm
+                    rs_selfield TYPE slis_selfield.
+
+  DATA: d_answer(1),
+        d_inversion TYPE p DECIMALS 4,
+        d_fecha_fin LIKE sy-datum,
+        d_aho_anu   TYPE p DECIMALS 4,
+        d_aho_fin   TYPE p DECIMALS 4,
+        d_fecha_has LIKE sy-datum.
+
+*detalle amortizaciones y otros conceptos
+
+
+  IF r_ucomm = 'ATRA'.
+    SUBMIT zpuarcos WITH s_bukrs IN s_bukrs
+                    WITH d_centro IN d_centro
+                    WITH p_divisi EQ p_divisi
+                    WITH p_compra IN s_ekgrp
+                    WITH s_materi IN s_materi
+                    WITH s_famili IN s_famili
+                    WITH s_proved IN s_proved
+                    WITH motivo IN motivo
+                    WITH r_alv EQ r_alv
+                    WITH r_lis EQ r_lis
+                    WITH util EQ util
+                    WITH c_user EQ c_user
+                    WITH ahorro EQ ahorro
+                    VIA SELECTION-SCREEN.
+
+
+  ELSEIF r_ucomm = 'DELTA'.
+*   Cogemos los valores.
+    PERFORM coger_valores CHANGING d_answer d_inversion d_fecha_fin
+                                   d_aho_anu d_aho_fin d_fecha_has.
+    IF d_answer = ' '.
+*     Calculamos los valores.
+      PERFORM calcular_valores USING d_inversion d_fecha_fin
+                                   d_aho_anu d_aho_fin d_fecha_has.
+
+*     Añadir los campos
+      PERFORM anadir_campos.
+
+*     Mostramos el ALV
+      PERFORM reuse_alv.
+    ENDIF.
+
+
+  ELSE.
+    READ TABLE i_alv INDEX rs_selfield-tabindex.
+
+    IF rs_selfield-fieldname = 'BANFN'.
+      SET PARAMETER ID 'BAN' FIELD i_alv-banfn.
+      SET PARAMETER ID 'BAP' FIELD i_alv-bnfpo.
+      CALL TRANSACTION 'ME53' AND SKIP FIRST SCREEN.
+    ELSE.
+      CASE r_ucomm.
+        WHEN 'AMO'.
+          PERFORM listamor.
+        WHEN 'REC'.
+          PERFORM listared.
+        WHEN OTHERS.
+*     VISUALIZAR SC
+          IF i_alv-bstyp = 'L'.
+            IF i_alv-pstyp <> '2'.
+              REFRESH i_bdcdata.
+              PERFORM bdc_dynpro      USING 'SAPMM06E' '0205'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                      'RM06E-EVRTN'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                      '/00'.
+              PERFORM bdc_field       USING 'RM06E-EVRTN'
+                                      i_alv-ebeln.
+              PERFORM bdc_dynpro      USING 'SAPMM06E' '0220'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                      'RM06E-EBELP'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                      '/00'.
+              PERFORM bdc_field       USING 'RM06E-EBELP'
+                                      i_alv-ebelp.
+              PERFORM bdc_dynpro      USING 'SAPMM06E' '0220'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                      'RM06E-EVRTP(01)'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                      '=KO'.
+              PERFORM bdc_field       USING 'RM06E-EBELP'
+                                      i_alv-ebelp.
+              PERFORM bdc_field       USING 'RM06E-TCSELFLAG(01)'
+                                      'X'.
+
+              DATA: lv_tcode    LIKE sy-tcode,
+                    lv_not_auth TYPE c.
+              CALL FUNCTION 'ZCHECK_PURCH_AUTHORIZATION'
+                EXPORTING
+                  p_uname          = sy-uname
+*                 P_MATKL          =
+                  p_matnr          = i_alv-matnr
+                  p_werks          = i_alv-werks
+                IMPORTING
+                  p_not_authorized = lv_not_auth.
+              IF lv_not_auth = 'X'.
+                lv_tcode = 'ME33L'.
+              ELSE.
+                lv_tcode = 'ME32L'.
+              ENDIF.
+
+              CALL TRANSACTION lv_tcode USING i_bdcdata MODE 'E'.
+            ELSE.
+              PERFORM bdc_dynpro      USING 'SAPMM06I' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'RM06I-KONSI'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '/00'.
+              PERFORM bdc_field       USING 'EINA-LIFNR'
+                                            i_alv-lifnr.
+              PERFORM bdc_field       USING 'EINA-MATNR'
+                                            i_alv-matnr.
+              PERFORM bdc_field       USING 'EINE-EKORG'
+                                            'ira'.
+              PERFORM bdc_field       USING 'EINE-WERKS'
+                                            i_alv-werks.
+              PERFORM bdc_field       USING 'RM06I-KONSI'
+                                            'X'.
+              PERFORM bdc_dynpro      USING 'SAPMM06I' '0101'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'EINA-MAHN1'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '/00'.
+              PERFORM bdc_dynpro      USING 'SAPMM06I' '0102'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=KO'.
+              CALL TRANSACTION 'ME12' USING i_bdcdata MODE 'E'.
+            ENDIF.
+          ELSE.
+            CALL FUNCTION 'ME_DISPLAY_PURCHASE_DOCUMENT'
+              EXPORTING
+                i_ebeln      = i_alv-ebeln
+                i_enjoy      = 'X'
+              EXCEPTIONS
+                not_found    = 1
+                no_authority = 2
+                invalid_call = 3
+                OTHERS       = 4.
+
+          ENDIF.
+      ENDCASE.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    "user_command
+
+
+*&---------------------------------------------------------------------*
+*&      Form  ORDENAR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_IT_SORT  text
+*----------------------------------------------------------------------*
+FORM ordenar.
+  DATA: ls_sort TYPE slis_sortinfo_alv.
+  ls_sort-fieldname = 'WERKS'.
+  ls_sort-up        = 'X'.
+  APPEND ls_sort TO it_sort.
+  ls_sort-fieldname = 'MATNR'.
+  ls_sort-up        = 'X'.
+  APPEND ls_sort TO it_sort.
+  ls_sort-fieldname = 'DENOMINACION'.
+  ls_sort-up        = 'X'.
+  APPEND ls_sort TO it_sort.
+
+ENDFORM.                    " SUBTOTALES
+*&---------------------------------------------------------------------*
+*&      Form  CONTRATOS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM contratos.
+*  De los registros de EKPO vemos cuales cumplen las condiciones
+* de la pantalla de selección material, centro y Grupo de artículos de
+* los documentos de compras, y se añaden las entradas a i_ekpo. También
+* añadimos a i_material los datos de materiales.esh mot.
+  CLEAR mot.
+  REFRESH mot.
+  SELECT * FROM t686c WHERE kzust IN motivo.
+    mot-kzust = t686c-kzust.
+    APPEND mot.
+  ENDSELECT.
+  REFRESH i_ekpo.
+  REFRESH matnr.
+  matnr[] = s_materi[].
+  IF s_revno IS NOT INITIAL OR s_iss IS NOT INITIAL.
+    PERFORM busca_buyone.
+  ELSE.
+*B USCAR MATERIALES ASOCIADOS
+    IF s_materi-low <> space.
+      SELECT * FROM ekpo                      "#EC CI_ALL_FIELDS_NEEDED
+        WHERE  matnr IN s_materi
+                          AND bukrs IN s_bukrs "mod IDE. PS:56344
+                          AND werks IN d_centro
+                          AND matkl IN s_famili
+                          AND bstyp <> 'A'.
+
+        CHECK ekpo-retpo = space.
+        IF ekpo-labnr <> space.
+          SELECT SINGLE * FROM mara           "#EC CI_ALL_FIELDS_NEEDED
+            WHERE matnr = ekpo-labnr.
+          IF sy-subrc = 0.
+            matnr-low = ekpo-labnr.
+            matnr-sign = 'I'.
+            matnr-option = 'EQ'.
+            APPEND matnr.
+          ENDIF.
+        ENDIF.
+      ENDSELECT.
+*REF ASOCIADA
+      SELECT * FROM ekpo                      "#EC CI_ALL_FIELDS_NEEDED
+        WHERE bukrs IN s_bukrs "mod IDE. PS:56344
+                          AND werks IN d_centro
+                          AND matkl IN s_famili
+                          AND bstyp <> 'A'
+                          AND labnr IN matnr.           "#EC CI_NOFIRST
+        CHECK ekpo-retpo = space.
+        IF ekpo-matnr <> space.
+          s_materi-low = ekpo-matnr.
+          s_materi-sign = 'I'.
+          s_materi-option = 'EQ'.
+          APPEND s_materi.
+        ENDIF.
+      ENDSELECT.
+
+    ENDIF.
+
+* SI SE PIDE UN PROVEEDOR BUSCAMOS SOLO
+
+    SELECT * FROM zekko                       "#EC CI_ALL_FIELDS_NEEDED
+      WHERE  matnr IN s_materi
+                      AND bukrs IN s_bukrs "mod IDE. PS:56344
+                      AND ekgrp IN  s_ekgrp
+                      AND werks IN d_centro
+                      AND matkl IN s_famili
+                      AND lifnr IN s_proved
+                      AND bstyp <> 'A'
+                      AND bstyp IN s_bstyp.
+
+*DELETE ADJACENT DUPLICATES FROM zekko COMPARING ALL FIELDS.
+
+*Si loekz distinto de espacio indica que está marcado para borrado
+*                      and loekz = space.
+      CLEAR i_ekpo.
+      CLEAR i_materiales.
+*      AUTHORITY-CHECK OBJECT 'Z_BO_WERKS'                               "commented by tushar
+*                            ID 'WERKS' FIELD zekko-werks.                  "commented by tushar
+      IF sy-subrc = 0.
+*Validamos el parámetro de la pantalla de selección de división con la
+*tabla Mara.
+        SELECT SINGLE * FROM mara             "#EC CI_ALL_FIELDS_NEEDED
+          WHERE matnr = zekko-matnr
+                                  AND spart LIKE d_divisi.
+        IF sy-subrc = 0.
+          MOVE-CORRESPONDING zekko TO i_ekpo.
+          i_ekpo-ebeln = zekko-ebeln.
+          i_ekpo-ebelp = zekko-ebelp.
+          i_ekpo-loekz = zekko-loekz.
+          i_ekpo-matnr = zekko-matnr.
+          i_ekpo-inco1 = zekko-inco1.
+          i_ekpo-inco2 = zekko-inco2.
+
+          i_ekpo-werks = zekko-werks.
+          i_ekpo-matkl = zekko-matkl.
+          i_ekpo-txz01 = zekko-txz01.
+          i_ekpo-idnlf = zekko-idnlf.
+          i_ekpo-bprme = zekko-bprme.
+          i_ekpo-pstyp = zekko-pstyp.       "Si = 3, subcontratación
+          i_ekpo-retpo = space.
+          APPEND i_ekpo.
+
+          i_materiales-ebeln = zekko-ebeln.
+          i_materiales-matnr = zekko-matnr.
+          i_materiales-werks = zekko-werks.
+          i_materiales-mtart = zekko-mtart.
+          i_materiales-spart = mara-spart.
+          i_materiales-ref_ant = mara-bismt.
+          i_materiales-meins = zekko-bprme.
+*Mod.Javi Arce.Nov11.PS122712.Añadir Proyecto (ZPIP/ZPFP/ZMD01)
+          i_materiales-prdha = mara-prdha.
+*End Mod.Javi Arce.Nov11.PS122712.
+          i_materiales-descripcion = i_ekpo-txz01.
+          APPEND i_materiales.
+        ENDIF.
+      ENDIF.
+    ENDSELECT.
+  ENDIF.
+
+
+
+  IF i_ekpo[] IS INITIAL.
+
+*     MESSAGE e011.
+  ENDIF.
+
+   DELETE ADJACENT DUPLICATES FROM i_ekpo COMPARING ALL FIELDS.
+  SORT i_ekpo BY ebeln.
+  LOOP AT i_ekpo.
+    AT END OF ebeln.
+*Selección de los documentos de compra con proveedor y Gr. compras
+      SELECT SINGLE *                         "#EC CI_ALL_FIELDS_NEEDED
+        FROM ekko
+       WHERE bukrs IN s_bukrs "mod IDE. PS:56344
+         AND ebeln = i_ekpo-ebeln
+         AND lifnr IN s_proved
+         AND ( bstyp = c_bstyp
+              OR bstyp = c_bstyp_pd )
+         AND ( ekgrp IN s_ekgrp ).
+      IF sy-subrc <> 0.
+        DELETE i_ekpo WHERE ebeln = i_ekpo-ebeln.
+        DELETE i_materiales WHERE ebeln = i_ekpo-ebeln.
+      ELSE.
+        CLEAR i_ekko.
+        MOVE-CORRESPONDING ekko TO i_ekko.
+        APPEND i_ekko.
+        LOOP AT i_ekpo WHERE ebeln = ekko-ebeln.
+          i_ekpo-lifnr = ekko-lifnr.
+          i_ekpo-waers = ekko-waers.
+          IF i_ekpo-inco1 = ' '.
+            i_ekpo-inco1 = ekko-inco1.   "Copiamos los incoterms de la
+            i_ekpo-inco2 = ekko-inco2.   "Cabecera.
+          ENDIF.
+          i_ekpo-ekgrp = ekko-ekgrp.
+          i_ekpo-spras = ekko-spras.
+          i_ekpo-bstyp = ekko-bstyp.
+          i_ekpo-knumv = ekko-knumv.
+          i_ekpo-bedat = ekko-bedat.
+          i_ekpo-zterm = ekko-zterm.
+          MODIFY i_ekpo.
+        ENDLOOP.
+      ENDIF.
+    ENDAT.
+  ENDLOOP.
+*Mod.Javi Arce Mar09-Eliminar duplicados.SDR294 PSs 51162 y 48330
+*sort i_materiales by matnr.
+  SORT i_materiales BY matnr werks meins.
+*End Mod.Javi Arce Mar09
+*Borramos las entradas duplicadas
+  DELETE ADJACENT DUPLICATES FROM i_materiales COMPARING matnr werks meins.
+  DESCRIBE TABLE i_materiales LINES d_entradas.
+  IF d_entradas = 0.
+*   MESSAGE e011.
+  ENDIF.
+
+ENDFORM.                    " CONTRATOS
+
+
+*---------------------------------------------------------------------*
+*       FORM OBSERVACIONES2                                           *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  P_EBELN                                                       *
+*  -->  P_EBELP                                                       *
+*  -->  P_SPRAS                                                       *
+*  -->  P_OBSERVACIONES                                               *
+*---------------------------------------------------------------------*
+FORM observaciones2 USING p_ebeln LIKE ekpo-ebeln
+                         p_ebelp LIKE ekpo-ebelp
+                         p_spras LIKE ekko-spras
+                  CHANGING p_observaciones LIKE tline-tdline.
+  CONCATENATE p_ebeln p_ebelp INTO d_name_obj .
+  CALL FUNCTION 'READ_TEXT'
+    EXPORTING
+      client                  = sy-mandt
+      id                      = 'F02'
+      language                = p_spras
+      name                    = d_name_obj
+      object                  = c_obj_text
+*     ARCHIVE_HANDLE          = 0
+    IMPORTING
+      header                  = r_header
+    TABLES
+      lines                   = i_lines
+    EXCEPTIONS
+      id                      = 1
+      language                = 2
+      name                    = 3
+      not_found               = 4
+      object                  = 5
+      reference_check         = 6
+      wrong_access_to_archive = 7
+      OTHERS                  = 8.
+  IF sy-subrc = 0.
+    READ TABLE i_lines INDEX 1.
+    i_condiciones-linea1 = i_lines-tdline.
+  ELSE.
+    i_condiciones-linea1 = ' '.
+  ENDIF.
+
+  CONCATENATE p_ebeln p_ebelp INTO d_name_obj .
+  CALL FUNCTION 'READ_TEXT'
+    EXPORTING
+      client                  = sy-mandt
+      id                      = 'F03'
+      language                = p_spras
+      name                    = d_name_obj
+      object                  = c_obj_text
+*     ARCHIVE_HANDLE          = 0
+    IMPORTING
+      header                  = r_header
+    TABLES
+      lines                   = i_lines
+    EXCEPTIONS
+      id                      = 1
+      language                = 2
+      name                    = 3
+      not_found               = 4
+      object                  = 5
+      reference_check         = 6
+      wrong_access_to_archive = 7
+      OTHERS                  = 8.
+  IF sy-subrc = 0.
+    READ TABLE i_lines INDEX 1.
+    i_condiciones-linea2 = i_lines-tdline.
+  ELSE.
+    i_condiciones-linea2 = ' '.
+  ENDIF.
+
+
+ENDFORM.                               " OBSERVACIONES
+*&---------------------------------------------------------------------*
+*&      Form  UTILLAJE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM utillaje.
+
+ENDFORM.                    " UTILLAJE
+
+*&---------------------------------------------------------------------*
+*&      Form  calcular_valores
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM calcular_valores USING p_inversion p_fecha_fin
+                            p_aho_anu p_aho_fin p_fecha_has.
+
+  DATA: c_fin_ano LIKE sy-datum.
+  DATA: num_dias  TYPE i,
+        num_dias2 TYPE i,
+        num_dias3 TYPE i.
+
+  LOOP AT i_alv.
+    CONCATENATE i_alv-fecha_inicial(4) '1231' INTO c_fin_ano.
+    num_dias = p_fecha_fin - i_alv-fecha_inicial.
+    num_dias2 = p_fecha_has - i_alv-fecha_inicial.
+    num_dias3 = c_fin_ano - i_alv-fecha_inicial.
+
+    i_alv-aho_audit = i_alv-importe - p_inversion /
+                      num_dias * num_dias2.
+    i_alv-aho_anual = i_alv-aho_audit / num_dias2 * 350.
+    i_alv-diferenc  = i_alv-aho_anual - p_aho_anu.
+    i_alv-aho_finan = i_alv-aho_audit / num_dias2 * num_dias3.
+    i_alv-dif_finan = i_alv-aho_finan - p_aho_fin.
+    MODIFY i_alv INDEX sy-tabix.
+  ENDLOOP.
+
+ENDFORM.                    " calcular_valores
+
+*&---------------------------------------------------------------------*
+*&      Form  coger_valores
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM coger_valores CHANGING p_answer p_inversion p_fecha_fin
+                            p_aho_anu p_aho_fin p_fecha_has.
+  DATA: i_campos LIKE TABLE OF sval WITH HEADER LINE.
+
+  CLEAR i_campos.
+  i_campos-tabname = 'RV13A'. "Moneda
+  i_campos-fieldname = 'KONWA'.
+  i_campos-value = 'EUR'.
+  CONDENSE i_campos-value.
+  i_campos-field_attr = '04'.
+  i_campos-field_obl = 'X'.
+  APPEND i_campos.
+
+  CLEAR i_campos.
+  i_campos-tabname = 'SYST'.  "Fecha pro. fin serie
+  i_campos-fieldname = 'DATUM'.
+  i_campos-fieldtext = TEXT-032.
+  i_campos-field_attr = '01'.
+  i_campos-field_obl = 'X'.
+  APPEND i_campos.
+
+
+  CLEAR i_campos.
+  i_campos-tabname = 'KONP'. "Inversión
+  i_campos-fieldname = 'KBETR'.
+  i_campos-fieldtext = TEXT-033.
+  i_campos-field_attr = '01'.
+  i_campos-field_obl = 'X'.
+  APPEND i_campos.
+
+  CLEAR i_campos.
+  i_campos-tabname = 'ZGIMEST'.  "Fecha pro. fin serie
+  i_campos-fieldname = 'LAEDA'.
+  i_campos-fieldtext = TEXT-034.
+  i_campos-field_attr = '01'.
+  i_campos-field_obl = 'X'.
+  APPEND i_campos.
+
+  CLEAR i_campos.
+  i_campos-tabname = 'KONP'. "Importe prev. anual
+  i_campos-fieldname = 'MXWRT'.
+  i_campos-fieldtext = TEXT-035.
+  i_campos-field_attr = '01'.
+  i_campos-field_obl = 'X'.
+  APPEND i_campos.
+
+  CLEAR i_campos.
+  i_campos-tabname = 'KONP'. "Importe finan. prev.
+  i_campos-fieldname = 'GKWRT'.
+  i_campos-fieldtext = TEXT-036.
+  i_campos-field_attr = '01'.
+  i_campos-field_obl = 'X'.
+  APPEND i_campos.
+
+
+  CALL FUNCTION 'POPUP_GET_VALUES'
+    EXPORTING
+*     NO_VALUE_CHECK  = ' '
+      popup_title     = TEXT-037
+    IMPORTING
+      returncode      = p_answer
+    TABLES
+      fields          = i_campos
+    EXCEPTIONS
+      error_in_fields = 1
+      OTHERS          = 2.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  READ TABLE i_campos WITH KEY fieldname = 'DATUM'.
+  p_fecha_has = i_campos-value.
+
+  READ TABLE i_campos WITH KEY tabname = 'KONP'
+                               fieldname = 'KBETR'.
+  p_inversion = i_campos-value.
+
+  READ TABLE i_campos WITH KEY fieldname = 'LAEDA'.
+  p_fecha_fin = i_campos-value.
+
+  READ TABLE i_campos WITH KEY tabname = 'KONP'
+                               fieldname = 'MXWRT'.
+  p_aho_anu = i_campos-value.
+
+  READ TABLE i_campos WITH KEY tabname = 'KONP'
+                               fieldname = 'GKWRT'.
+  p_aho_fin = i_campos-value.
+
+ENDFORM.                    " coger_valores
+
+*&---------------------------------------------------------------------*
+*&      Form  anadir_campos
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM anadir_campos.
+  DATA: ls_fieldcat TYPE slis_fieldcat_alv.
+* Comprobamos primero que no existan ya.
+  READ TABLE it_fieldcat INTO ls_fieldcat
+                         WITH KEY fieldname = 'AHO_AUDIT'.
+  IF sy-subrc NE 0.
+    CLEAR ls_fieldcat.
+    ls_fieldcat-fieldname = 'AHO_AUDIT'.
+    ls_fieldcat-ref_tabname = 'ZMEJORA'.
+    ls_fieldcat-ref_fieldname = 'MEJORA_TOTAL'.
+    ls_fieldcat-seltext_s = TEXT-042.
+    ls_fieldcat-seltext_m = TEXT-042.
+    ls_fieldcat-seltext_l = TEXT-042.
+    ls_fieldcat-reptext_ddic = TEXT-042.
+    ls_fieldcat-col_pos = 91.
+    APPEND ls_fieldcat TO it_fieldcat.
+  ENDIF.
+
+  READ TABLE it_fieldcat INTO ls_fieldcat
+                         WITH KEY fieldname = 'AHO_ANUAL'.
+  IF sy-subrc NE 0.
+    CLEAR ls_fieldcat.
+    ls_fieldcat-fieldname = 'AHO_ANUAL'.
+    ls_fieldcat-ref_tabname = 'ZMEJORA'.
+    ls_fieldcat-ref_fieldname = 'MEJORA_TOTAL'.
+    ls_fieldcat-seltext_s = TEXT-043.
+    ls_fieldcat-seltext_m = TEXT-043.
+    ls_fieldcat-seltext_l = TEXT-043.
+    ls_fieldcat-reptext_ddic = TEXT-043.
+    ls_fieldcat-col_pos = 92.
+    APPEND ls_fieldcat TO it_fieldcat.
+  ENDIF.
+
+  READ TABLE it_fieldcat INTO ls_fieldcat
+                         WITH KEY fieldname = 'DIFERENC'.
+  IF sy-subrc NE 0.
+    CLEAR ls_fieldcat.
+    ls_fieldcat-fieldname = 'DIFERENC'.
+    ls_fieldcat-ref_tabname = 'ZMEJORA'.
+    ls_fieldcat-ref_fieldname = 'MEJORA_TOTAL'.
+    ls_fieldcat-seltext_s = TEXT-044.
+    ls_fieldcat-seltext_m = TEXT-044.
+    ls_fieldcat-seltext_l = TEXT-044.
+    ls_fieldcat-reptext_ddic = TEXT-044.
+    ls_fieldcat-col_pos = 93.
+    APPEND ls_fieldcat TO it_fieldcat.
+  ENDIF.
+
+
+
+  READ TABLE it_fieldcat INTO ls_fieldcat
+                         WITH KEY fieldname = 'AHO_FINAN'.
+  IF sy-subrc NE 0.
+    CLEAR ls_fieldcat.
+    ls_fieldcat-fieldname = 'AHO_FINAN'.
+    ls_fieldcat-ref_tabname = 'ZMEJORA'.
+    ls_fieldcat-ref_fieldname = 'MEJORA_TOTAL'.
+    ls_fieldcat-seltext_s = TEXT-045.
+    ls_fieldcat-seltext_m = TEXT-045.
+    ls_fieldcat-seltext_l = TEXT-045.
+    ls_fieldcat-reptext_ddic = TEXT-045.
+    ls_fieldcat-col_pos = 94.
+    APPEND ls_fieldcat TO it_fieldcat.
+  ENDIF.
+
+
+  READ TABLE it_fieldcat INTO ls_fieldcat
+                         WITH KEY fieldname = 'DIF_FINAN'.
+  IF sy-subrc NE 0.
+    CLEAR ls_fieldcat.
+    ls_fieldcat-fieldname = 'DIF_FINAN'.
+    ls_fieldcat-ref_tabname = 'ZMEJORA'.
+    ls_fieldcat-ref_fieldname = 'MEJORA_TOTAL'.
+    ls_fieldcat-seltext_s = TEXT-046.
+    ls_fieldcat-seltext_m = TEXT-046.
+    ls_fieldcat-seltext_l = TEXT-046.
+    ls_fieldcat-reptext_ddic = TEXT-046.
+    ls_fieldcat-col_pos = 95.
+    APPEND ls_fieldcat TO it_fieldcat.
+  ENDIF.
+
+
+ENDFORM.                    " anadir_campos
+*&---------------------------------------------------------------------*
+*&      Form  reuse_alv
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM reuse_alv.
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program       = 'ZPUARCOS'
+      i_callback_pf_status_set = 'STANDARD_FULLSCREEN'      "ADDED BY TUSHAR PAWAR (STATUS REPLACED BY STANDARD_FULLSCREEN)
+      i_callback_user_command  = 'USER_COMMAND'
+*     I_CALLBACK_TOP_OF_PAGE   = 'TOP_OF_PAGE'
+*     I_CALLBACK_HTML_TOP_OF_PAGE = ''
+*     I_CALLBACK_HTML_END_OF_LIST = 'END_OF_LIST'
+*     I_STRUCTURE_NAME         = 'ZPL1_WL'
+*     I_BACKGROUND_ID          = ' '
+      i_grid_title             = ' '
+      i_grid_settings          = i_grid_settings
+      is_layout                = is_layout
+      it_fieldcat              = it_fieldcat
+*     IT_EXCLUDING             =
+*     IT_SPECIAL_GROUPS        =
+      it_sort                  = it_sort
+*     IT_FILTER                =
+*     IS_SEL_HIDE              =
+*     I_DEFAULT                = 'X'
+      i_save                   = 'A'
+      is_variant               = is_variant
+      it_events                = it_events
+*     IT_EVENTS                =
+*     IT_EVENT_EXIT            =
+*     IS_PRINT                 =
+*     IS_REPREP_ID             =
+*     I_SCREEN_START_COLUMN    = 0
+*     I_SCREEN_START_LINE      = 0
+*     I_SCREEN_END_COLUMN      = 0
+*     I_SCREEN_END_LINE        = 0
+*     IT_ALV_GRAPHICS          =
+*     IT_ADD_FIELDCAT          =
+*     IT_HYPERLINK             =
+*   IMPORTING
+*     E_EXIT_CAUSED_BY_CALLER  =
+*     ES_EXIT_CAUSED_BY_USER   =
+    TABLES
+      t_outtab                 = i_alv
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+ENDFORM.                    " reuse_alv
+*&---------------------------------------------------------------------*
+*&      Form  LISTAMOR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM listamor .
+  DATA:titulo(40).
+  DATA:    BEGIN OF xkonp OCCURS 50.
+             INCLUDE STRUCTURE konpdb.
+           DATA:    END OF xkonp.
+  REFRESH i_alv2.
+  IF sy-tcode(1) = 'M'.
+    IMPORT xkonp FROM MEMORY ID 'ZUTIL'.
+
+    LOOP AT xkonp.
+      SELECT  SINGLE * FROM a016 WHERE knumh = xkonp-knumh AND kappl = 'M'.
+      SELECT SINGLE * FROM ekko WHERE ebeln = a016-evrtn. "#EC CI_ALL_FIELDS_NEEDED
+      SELECT SINGLE * FROM ekpo WHERE ebeln = a016-evrtn AND ebelp = a016-evrtp. "#EC CI_ALL_FIELDS_NEEDED
+      SELECT *
+        FROM a016
+       WHERE kappl = 'M'
+         AND kschl = 'PB00'
+         AND evrtn = a016-evrtn
+         AND evrtp = a016-evrtp.
+        MOVE-CORRESPONDING a016 TO i_alv.
+        MOVE-CORRESPONDING ekko TO i_alv.
+        MOVE-CORRESPONDING ekpo TO i_alv.
+        APPEND i_alv.
+      ENDSELECT.
+      EXIT.
+    ENDLOOP.
+    DELETE ADJACENT DUPLICATES FROM i_alv.               "#EC CI_SORTED
+  ENDIF.
+*listamos amortizaciones
+  LOOP AT i_alv WHERE matnr = i_alv-matnr AND lifnr = i_alv-lifnr AND werks = i_alv-werks AND bloqueo = ' '.
+    SELECT *                                  "#EC CI_ALL_FIELDS_NEEDED
+      FROM konp
+     WHERE knumh = i_alv-knumh
+       AND kappl = 'M'
+       AND loevm_ko = space.
+      IF  konp-kschl(3) = 'AMO'.
+*        select single * from a016 where knumh = i_alv-knumh AND kappl = 'M'.
+        MOVE-CORRESPONDING i_alv TO i_alv2.
+        MOVE-CORRESPONDING a016 TO i_alv2.
+        MOVE-CORRESPONDING konp TO i_alv2.
+
+*cantidad escala
+        SELECT * FROM konm WHERE knumh = konp-knumh AND kopos = konp-kopos.
+          MOVE-CORRESPONDING konm TO i_alv2.
+        ENDSELECT.
+*buscamos el valor de la inversión.
+
+        APPEND i_alv2.
+
+
+      ENDIF.
+
+    ENDSELECT.
+  ENDLOOP.
+
+  titulo = i_alv-matnr.
+  CONCATENATE titulo i_alv-name1(20) INTO titulo SEPARATED BY '/'.
+  CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+    EXPORTING
+      i_title               = titulo
+      i_zebra               = 'X'
+      i_screen_start_column = 10
+      i_screen_start_line   = 10
+      i_screen_end_column   = 120
+      i_screen_end_line     = 15
+*     i_checkbox_fieldname  = 'CHECK'
+      i_tabname             = 'I_ALV2'
+      i_structure_name      = 'ZPFP_ALV2'
+    TABLES
+      t_outtab              = i_alv2.
+
+ENDFORM.                    " LISTAMOR
+*&---------------------------------------------------------------------*
+*&      Form  LISTARED
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM listared .
+*reducciones
+  DATA:titulo(40).
+  DATA:    BEGIN OF xkonp OCCURS 50.
+             INCLUDE STRUCTURE konpdb.
+           DATA:    END OF xkonp.
+  DATA: precio LIKE ekpo-netpr.
+  precio = 0.
+  REFRESH i_alv3.
+  REFRESH i_alv2.
+*listamos amortizaciones
+  LOOP AT i_alv WHERE matnr = i_alv-matnr AND lifnr = i_alv-lifnr AND werks = i_alv-werks AND bloqueo = ' '.
+    SELECT * FROM konp                        "#EC CI_ALL_FIELDS_NEEDED
+      WHERE knumh = i_alv-knumh AND kappl = 'M'
+    AND loevm_ko = space.
+      IF  konp-kschl(3) = 'RA0'.
+        precio = i_alv-precio_prov.
+
+*      select single * from a016 where knumh = i_alv-knumh AND kappl = 'M'.
+
+        MOVE-CORRESPONDING i_alv TO i_alv3.
+        MOVE-CORRESPONDING a016 TO i_alv3.
+        i_alv3-datab = i_alv-fecha_inicial.
+        i_alv3-datbi = i_alv-fecha_fin.
+
+        MOVE-CORRESPONDING konp TO i_alv3.
+
+*cantidad escala
+        SELECT * FROM konm WHERE knumh = konp-knumh AND kopos = konp-kopos.
+          MOVE-CORRESPONDING konm TO i_alv3.
+          IF konp-kschl = 'RA01'.
+            i_alv3-kbetr =  i_alv3-kbetr / 10.
+*calculamos el precio
+            i_alv3-precio = i_alv-precio_prov + ( i_alv-precio_prov *   i_alv3-kbetr / 100 ).
+            i_alv-precio_prov = i_alv-precio_prov + ( i_alv-precio_prov *   i_alv3-kbetr / 100 ).
+          ELSE.
+            i_alv3-precio = konm-kbetr.
+            i_alv3-kbetr  = ( ( precio - i_alv3-precio ) /  precio ) * 100.
+            precio = i_alv3-precio.
+
+          ENDIF.
+          APPEND i_alv3.
+        ENDSELECT.
+*buscamos el valor de la inversión.
+      ENDIF.
+
+    ENDSELECT.
+  ENDLOOP.
+  DESCRIBE TABLE i_alv3 LINES lines.
+  IF lines > 1.
+    lines = lines + 15.
+  ENDIF.
+  titulo = i_alv-matnr.
+  CONCATENATE titulo i_alv-name1(20) INTO titulo SEPARATED BY '/'.
+  CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+    EXPORTING
+      i_title               = titulo
+      i_zebra               = 'X'
+      i_screen_start_column = 10
+      i_screen_start_line   = 10
+      i_screen_end_column   = 120
+      i_screen_end_line     = lines
+*     i_checkbox_fieldname  = 'CHECK'
+      i_tabname             = 'I_ALV3'
+      i_structure_name      = 'ZPFP_ALV3'
+    TABLES
+      t_outtab              = i_alv3.
+
+ENDFORM.                    "LISTARED
+*&---------------------------------------------------------------------*
+*&      Form  BUSCA_BUYONE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM busca_buyone .
+
+  SELECT * FROM konh INTO TABLE i_konh WHERE revno IN s_revno AND kosrt IN s_iss.
+  IF i_konh[] IS NOT INITIAL.
+    SELECT * INTO TABLE i_a016
+      FROM a016
+      FOR ALL ENTRIES IN i_konh                    "#EC CI_NO_TRANSFORM
+    WHERE kappl = 'M'
+      AND kschl = 'PB00'
+      AND knumh = i_konh-knumh.
+*      AND evrtn = i_konh-vakey(10). "AND evrtp =  i_konh-vakey+10(5)  " commented by tushar pawar
+
+
+    SELECT * FROM zekko
+      FOR ALL ENTRIES IN i_a016                    "#EC CI_NO_TRANSFORM
+      WHERE  matnr IN s_materi
+        AND bukrs IN s_bukrs "mod IDE. PS:56344
+        AND werks IN d_centro
+        AND matkl IN s_famili
+        AND lifnr IN s_proved
+        AND bstyp <> 'A'
+        AND bstyp IN s_bstyp
+        AND ebeln = i_a016-evrtn
+        AND ebelp = i_a016-evrtp.
+
+
+*Si loekz distinto de espacio indica que está marcado para borrado
+*                      and loekz = space.
+      CLEAR i_ekpo.
+      CLEAR i_materiales.
+      AUTHORITY-CHECK OBJECT 'Z_BO_WERKS'
+                            ID 'WERKS' FIELD zekko-werks.
+      IF sy-subrc = 0.
+*Validamos el parámetro de la pantalla de selección de división con la
+*tabla Mara.
+        SELECT SINGLE *                       "#EC CI_ALL_FIELDS_NEEDED
+          FROM mara
+         WHERE matnr = zekko-matnr
+           AND spart LIKE d_divisi.
+        IF sy-subrc = 0.
+          MOVE-CORRESPONDING zekko TO i_ekpo.
+          i_ekpo-ebeln = zekko-ebeln.
+          i_ekpo-ebelp = zekko-ebelp.
+          i_ekpo-loekz = zekko-loekz.
+          i_ekpo-matnr = zekko-matnr.
+          i_ekpo-inco1 = zekko-inco1.
+          i_ekpo-inco2 = zekko-inco2.
+
+          i_ekpo-werks = zekko-werks.
+          i_ekpo-matkl = zekko-matkl.
+          i_ekpo-txz01 = zekko-txz01.
+          i_ekpo-idnlf = zekko-idnlf.
+          i_ekpo-bprme = zekko-bprme.
+          i_ekpo-pstyp = zekko-pstyp.       "Si = 3, subcontratación
+          i_ekpo-retpo = space.
+          APPEND i_ekpo.
+
+          i_materiales-ebeln = zekko-ebeln.
+          i_materiales-matnr = zekko-matnr.
+          i_materiales-werks = zekko-werks.
+          i_materiales-mtart = zekko-mtart.
+          i_materiales-spart = mara-spart.
+          i_materiales-ref_ant = mara-bismt.
+          i_materiales-meins = zekko-bprme.
+*Mod.Javi Arce.Nov11.PS122712.Añadir Proyecto (ZPIP/ZPFP/ZMD01)
+          i_materiales-prdha = mara-prdha.
+*End Mod.Javi Arce.Nov11.PS122712.
+          i_materiales-descripcion = i_ekpo-txz01.
+          APPEND i_materiales.
+        ENDIF.
+      ENDIF.
+    ENDSELECT.
+
+    DELETE ADJACENT DUPLICATES FROM i_ekpo.              "#EC CI_SORTED
+    DELETE ADJACENT DUPLICATES FROM i_materiales.        "#EC CI_SORTED
+  ENDIF.
+ENDFORM.
+FORM conversion_moneda_c USING p_fecha LIKE sy-datum
+                             p_kbetr LIKE konp-kbetr
+                             p_mon_ex LIKE konp-konwa
+                             p_mon_lo LIKE konp-konwa.
+  CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+    EXPORTING
+      date             = p_fecha
+      foreign_amount   = p_kbetr
+      foreign_currency = p_mon_ex
+      local_currency   = p_mon_lo
+*     RATE             = 0
+      type_of_rate     = 'M'
+    IMPORTING
+*     exchange_rate    = d_tipo_cambio
+      local_amount     = p_kbetr
+    EXCEPTIONS
+      no_rate_found    = 1
+      overflow         = 2
+      no_factors_found = 3
+      no_spread_found  = 4
+      OTHERS           = 5.
+ENDFORM.                               " CONVERSION_MONEDA
