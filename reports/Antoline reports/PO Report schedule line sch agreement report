@@ -9,10 +9,8 @@
 *& DATE             : 22/06/2026
 *& TCODE            : ZME07
 *&*--------------------------------------------------------------------*
+"providing delivery schedules, quantities, vendor information, and purchasing document details.
 REPORT zekpopending.
-*order list
-
-
 TABLES: ekko, ekpo, ekbe, lfa1, t001, eket, ekkn, fplt, eban, prps,
         invfo, rbkp, bsec, nast, a016, konh, konp, bkpf, zmmeband, zmmpuppen,
         zekko, t001w,zhrwfah, zhrwfa , pa0002, t007s,
