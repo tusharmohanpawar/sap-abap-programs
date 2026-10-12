@@ -1,0 +1,2180 @@
+
+REPORT zpulipl1 LINE-SIZE 160 LINE-COUNT 999(0) MESSAGE-ID zc
+*report zpulipl1 line-size 120  message-id zc
+              NO STANDARD PAGE HEADING.
+INCLUDE zificheros.
+INCLUDE zicontador.
+*---------------------------------------------------------------------*
+*  TABLAS DEL SISTEMA
+*----------------------------------------------------------------------*
+TABLES: ekko,
+        zpsdcc,
+        aufk,
+        zt001w,
+        pa0002,
+        t052,
+        fplt,
+        t001,
+        tvtbt,
+        adr6,
+        lfm1,
+        konh,
+        *eban,
+        z023t,
+        nast,
+        zpuautp,
+        tvzbt,
+        t001w,
+        ekpo,
+        a016,
+        a017,
+        konp,
+        PRCD_ELEMENTS,
+        ekan,
+        eban,
+        eket,
+        zhrwfah,
+        zhrwfa,
+        t052u,
+        lfa1,
+        usr01,
+        ekkn,
+        tcurx,
+        t005t,
+        usr21,
+        pa0105,
+        adcp.
+*----------------------------------------------------------------------*
+*  TABLAS INTERNAS
+*----------------------------------------------------------------------*
+TYPE-POOLS: slis.
+TYPE-POOLS kkblo .
+
+
+DATA: d_action TYPE zdecis.
+DATA: i_wf_po TYPE REF TO z_mm_wf_po.
+DATA: d_comment TYPE string.
+DATA: l_zhrwfah TYPE zhrwfah,
+      l_task    TYPE zhrwf_tasks.
+
+TYPES:  rs_selfield TYPE slis_selfield.
+DATA: ct_fieldcat TYPE slis_t_fieldcat_alv.
+DATA: is_u_layout TYPE slis_layout_alv.
+DATA: s_grid_settings TYPE lvc_s_glay,
+      titletext       TYPE lvc_title.
+*Tabla interna con las posiciones del plan de entrega
+DATA: BEGIN OF tabs OCCURS 0.
+DATA: banfn LIKE eban-banfn.
+DATA: bnfpo LIKE eban-bnfpo.
+DATA:END OF tabs.
+DATA: centroc(20).
+DATA: tcoste(50).
+DATA: BEGIN OF razon OCCURS 10.
+        INCLUDE STRUCTURE dd07v.
+      DATA:END OF razon.
+DATA: BEGIN OF i_bdcdata OCCURS 0.
+        INCLUDE STRUCTURE bdcdata.
+      DATA: END OF i_bdcdata.
+
+DATA: dias(3).
+DATA: desglose(1).
+DATA: linea1(300).
+DATA: indice LIKE sy-tabix.
+DATA: indice2 LIKE sy-tabix.
+DATA: numerop LIKE zhrwfah-pernr.
+DATA: numeroc LIKE zhrwfah-pernr.
+DATA: vfnumt(10).
+DATA: vfnum LIKE zhrwf_tasks-wfnum.
+DATA: namefile LIKE ocs_file-name.
+
+DATA: BEGIN OF listafile OCCURS 20.
+        INCLUDE STRUCTURE ocs_file.
+      DATA: END OF listafile.
+
+DATA: pedido TYPE zwfnum.
+
+DATA: BEGIN OF i_ekpo OCCURS 20,
+        ebeln  LIKE ekpo-ebeln,
+        ebelp  LIKE ekpo-ebelp,
+        matnr  LIKE ekpo-matnr,
+        txz01  LIKE ekpo-txz01,
+        netpr  LIKE ekpo-netpr,         "Precio neto del doc. compras
+        peinh  LIKE ekpo-peinh,
+        ktmng  LIKE ekpo-ktmng,         "Cantidad para plan entrega
+        menge  LIKE ekpo-menge,         "Cantidad para pedido cerrado
+        bprme  LIKE ekpo-bprme,
+        aedat  LIKE ekpo-aedat,         "Fecha última modificación
+        semana LIKE scal-week,
+        werks  LIKE ekpo-werks,
+        adrnr  LIKE ekpo-adrnr,
+        banfn  LIKE ekpo-banfn,
+        bnfpo  LIKE ekpo-bnfpo,
+        pstyp  LIKE ekpo-pstyp,
+        retpo  LIKE ekpo-retpo,
+        fplnr  LIKE ekpo-fplnr,
+        inco1  LIKE ekpo-inco1,
+        inco2  LIKE ekpo-inco2,
+        lifnr  LIKE ekko-lifnr,
+        name1  LIKE lfa1-name1,
+        matkl  LIKE ekpo-matkl,
+      END OF i_ekpo.
+
+DATA i_ekpo_tot LIKE i_ekpo OCCURS 0 WITH HEADER LINE.
+DATA: num(5).
+DATA: cla LIKE thead-tdid.
+DATA: idioma LIKE sy-langu.
+DATA: value LIKE dd07v-domvalue_l.
+DATA: text(60).
+DATA: tot_pedido LIKE ekpo-netwr.
+
+
+
+DATA: semana LIKE scal-week.
+DATA: preaux TYPE p DECIMALS 2.
+DATA: BEGIN OF ex OCCURS 10.
+DATA: fil TYPE i..
+DATA: col TYPE i.
+DATA: valor(500).
+DATA:END OF ex.
+DATA: n_hoja TYPE i.
+DATA: BEGIN OF tab OCCURS 10.
+DATA: ebeln LIKE ekko-ebeln.
+
+DATA:END OF tab.
+
+
+
+
+DATA: BEGIN OF selection.
+        INCLUDE STRUCTURE addr1_sel.
+      DATA: END OF selection.
+DATA: BEGIN OF result.
+        INCLUDE STRUCTURE addr1_val.
+      DATA: END OF result.
+DATA: usr033 LIKE usr03.
+DATA: comando1(60).
+DATA: ruta(60).
+DATA: comando2(60).
+DATA: comando3(60).
+DATA: origen LIKE rlgrap-filename.
+DATA: destino LIKE rlgrap-filename.
+DATA: red LIKE rlgrap-filename.
+DATA: spras LIKE ekko-spras.
+
+DATA: BEGIN OF ls_para OCCURS 30.
+        INCLUDE    STRUCTURE usparam.
+      DATA: END OF  ls_para.
+
+
+
+*Tabla interna con las condiciones de las posiciones plan de entrega
+DATA:BEGIN OF i_condiciones OCCURS 30,
+       ebelp       LIKE ekpo-ebelp,
+       datab       LIKE a016-datab,         "Inicio validez de condición.
+
+       datbi       LIKE a016-datbi,         "Inicio validez de condición.
+       precio_prov LIKE konp-kbetr,
+       moneda      LIKE PRCD_ELEMENTS-waers,
+       base        LIKE konp-kpein,
+       cant_zicm   LIKE konp-kbetr,
+       cant_zind   LIKE konp-kbetr,
+       base_zind   LIKE konp-kpein,
+       mond_zind   LIKE konp-konwa,
+       knumh       LIKE a016-knumh,
+       banfn       LIKE konh-banfn,
+       bnfpo       LIKE konh-bnfpo,
+       inco1       LIKE ekpo-inco1,
+       inco2       LIKE ekpo-inco2,
+       revno       LIKE ekko-revno,
+       impuesto    LIKE konh-impuesto,
+     END OF i_condiciones.
+
+DATA: i_condiciones_tot LIKE i_condiciones OCCURS 0 WITH HEADER LINE.
+
+* Tabla interna que se usa de forma auxiliar para las condiciones de una
+* sola posición.
+DATA: BEGIN OF i_aux_cond OCCURS 10,
+        ebelp LIKE ekpo-ebelp,
+        datab LIKE a016-datab,         "Inicio validez de condición.
+        datbi LIKE a016-datbi,
+        knumh LIKE a016-knumh,
+      END OF i_aux_cond.
+*Tabla interna con los campos de la pantalla de seleccion de condiciones
+* de posición a imprimir.
+DATA: BEGIN OF i_linea OCCURS 0.
+DATA: xselp(1).
+INCLUDE STRUCTURE  zpuarcom4.
+DATA:END OF i_linea.
+
+DATA: BEGIN OF i_linea2 OCCURS 0.
+DATA: xselp(1).
+INCLUDE STRUCTURE  zpuarcom4.
+DATA:END OF i_linea2.
+
+DATA: BEGIN OF i_pedidos OCCURS 0,
+        ebeln LIKE ekpo-ebeln,
+      END OF i_pedidos.
+DATA: cekko LIKE ekko.
+
+*Tabla interna con los campos a imprimir en el documento, linea de     *
+* detalle.
+DATA: BEGIN OF i_detalle OCCURS 0,
+        ebeln          LIKE ekpo-ebeln,
+        ebelp          LIKE ekpo-ebelp,
+        retpo          LIKE ekpo-retpo,
+        revno          LIKE ekko-revno,
+        ktmng          TYPE p DECIMALS 3, " LIKE EKPO-KTMNG,         "Cantidad
+        meins          LIKE ekpo-meins,
+        matnr          LIKE ekpo-matnr,
+        nivel          LIKE zppning-zppniv,    "Nivel de ingeniería para la fecha
+        txz01          LIKE ekpo-txz01,
+        precio_prov    TYPE p DECIMALS 5,
+        decimales      TYPE i,
+        decimales_zind TYPE i,
+        waers          LIKE ekko-waers,         "Moneda pedido
+        datab          LIKE a016-datab,         "Inicio validez de condición.
+        datbi          LIKE a016-datbi,
+        knumh          LIKE a016-knumh,
+        cant_zind      TYPE p DECIMALS 5,   "2ª linea de detalle si existe.
+        mond_zind      LIKE konp-konwa,
+        adrnr          LIKE ekpo-adrnr,
+        werks          LIKE ekpo-werks,
+        banfn          LIKE konh-banfn,
+        bnfpo          LIKE konh-bnfpo,
+        fplnr          LIKE ekpo-fplnr,
+        inco1          LIKE ekpo-inco1,
+        inco2          LIKE ekpo-inco2,
+        matkl          LIKE ekpo-matkl,
+        impuesto       LIKE konh-impuesto,
+      END OF i_detalle.
+*Tabla interna para la estructura de las funciones de textos
+DATA:BEGIN OF i_lines OCCURS 0.
+       INCLUDE STRUCTURE tline.
+     DATA:END OF i_lines.
+*Tabla interna con los textos libres, hasta 10 lineas.
+DATA:BEGIN OF t_a016 OCCURS 0.
+       INCLUDE STRUCTURE a016.
+     DATA:END OF t_a016.
+DATA:BEGIN OF t_ebelp OCCURS 0.
+       INCLUDE STRUCTURE ekpo.
+     DATA:END OF t_ebelp.
+
+DATA: BEGIN OF i_texto_libre OCCURS 10,
+        observa(100),
+      END OF i_texto_libre.
+*Tabla interna con los textos a nivel de posicion.
+DATA: BEGIN OF i_texto_posicion OCCURS 10,
+        ebelp     LIKE ekpo-ebelp,
+        texto(80),
+      END OF i_texto_posicion.
+*Tablas internas para pedidos cerrados
+*Tabla interna con las posiciones de pedidos cerrados
+DATA:BEGIN OF i_dat_pos_cer OCCURS 30,
+       ebelp       LIKE ekpo-ebelp,
+       bedat       LIKE eket-bedat,         "Fecha del pedido
+       precio_prov LIKE PRCD_ELEMENTS-kwert,
+       moneda      LIKE PRCD_ELEMENTS-waers,
+       base        LIKE PRCD_ELEMENTS-kpein,
+       cant_zind   LIKE PRCD_ELEMENTS-kwert,
+       base_zind   LIKE PRCD_ELEMENTS-kpein,
+       mond_zind   LIKE PRCD_ELEMENTS-waers,
+       adrnr       LIKE ekpo-adrnr,
+     END OF i_dat_pos_cer.
+DATA: i_dat_pos_cer_tot LIKE i_dat_pos_cer OCCURS 0 WITH HEADER LINE.
+*Tabla interna con los textos de las condiciones de pago. Ambos pedidos.
+DATA: BEGIN OF i_text_cond_pag OCCURS 2,
+        texto(75),
+        dias(3),
+      END OF i_text_cond_pag.
+
+DATA: BEGIN OF i_text_envio OCCURS 2,
+        texto(75),
+      END OF i_text_envio.
+
+*Tabla interna el texto adicional de los pedidos.
+DATA:BEGIN OF i_texto_adicional OCCURS 0.
+       INCLUDE STRUCTURE tline.
+     DATA:END OF i_texto_adicional.
+
+*Tabla interna campo text.
+DATA:BEGIN OF i_texto_text OCCURS 0.
+       INCLUDE STRUCTURE tline.
+     DATA:END OF i_texto_text.
+
+*----------------------------------------------------------------------*
+*  REGISTRO
+*----------------------------------------------------------------------*
+*Registro con los datos del documento
+DATA: BEGIN OF r_ekko OCCURS 0,
+        marca(1),
+        ebeln    LIKE ekko-ebeln,
+        ihrez    LIKE ekko-ihrez,         "Emitido por
+        kdate    LIKE ekko-kdate,         "Plazo de entrega ped cerrado
+        verkf    LIKE ekko-verkf,         "Persona de contacto
+        waers    LIKE ekko-waers,         "Moneda pedido
+        bstyp    LIKE ekko-bstyp,
+        lifnr    LIKE ekko-lifnr,         "Proveedor
+        bedat    LIKE ekko-bedat,         "Fecha del documento, del pedido
+        inco1    LIKE ekko-inco1,
+        inco2    LIKE ekko-inco2,
+        zterm    LIKE ekko-zterm,         "Código condiciones de pago
+        spras    LIKE ekko-spras,
+        knumv    LIKE ekko-knumv, "Condición de precio en el caso de
+        angnr    LIKE ekko-angnr,
+        adrnr    LIKE ekko-adrnr,
+        unsez    LIKE ekko-unsez,
+        bukrs    LIKE ekko-bukrs,
+        name1    LIKE lfa1-name1,
+        revno    LIKE ekko-revno,
+        frggr    LIKE ekko-frggr,
+        frgrl    LIKE ekko-frgrl,
+        memory   LIKE ekko-memory,
+      END OF r_ekko.                   "pedido cerrado.
+*Registro con los datos del proveedor
+DATA: BEGIN OF r_lifnr OCCURS 0,
+        ebeln  LIKE ekko-ebeln,
+        lifnr  LIKE ekko-lifnr,
+        name1  LIKE ekan-name1,
+        name2  LIKE ekan-name2,
+        land1  LIKE t005t-landx,
+        landx  LIKE t005t-landx,
+        stras  LIKE ekan-stras,
+        ort01  LIKE ekan-ort01,
+        pstlz  LIKE ekan-pstlz,         "c.p.
+        remark LIKE addr1_val-remark,
+        telf1  LIKE lfa1-telf1,
+        telfx  LIKE lfa1-telfx,
+        mail   LIKE adr6-smtp_addr,
+        region LIKE addr1_data-region,
+      END OF r_lifnr.
+*Estructura para datos adicionales del documento, pie del documento
+DATA: BEGIN OF r_datos_ad,
+        codigo_proy    LIKE rm06e-ltex1,
+        envio          LIKE rm06e-ltex1,
+        cond_pago(75),
+        cond_pago2(75),
+        cond_pago3(75),
+        kdate          LIKE ekko-kdate, "Plazo de entrega para pedido cerrado
+        plazo_ent(50),"Plazo de entrega para plan de entregas o ped cerr
+        cant_zicm      LIKE konp-kbetr,     "Zicm
+        dias           LIKE t052-ztag1,
+      END OF r_datos_ad.
+*Estructura para el expor de las funciones.
+DATA: BEGIN OF r_header.
+        INCLUDE STRUCTURE thead.
+      DATA: END OF r_header.
+*----------------------------------------------------------------------*
+* DATOS VARIABLES
+*----------------------------------------------------------------------*
+DATA: d_rb(1),                         "Radiobutton
+      d_flag(1)        VALUE ' ',
+      d_checkbox(1),
+      d_linea(4)       TYPE n,               "Número de linea que leemos
+      d_name           LIKE thead-tdname,
+      d_entradas       TYPE i,
+      d_impresora      LIKE usr01-spld,
+*Parámetros de la función de impresión
+      d_arcpar         LIKE arc_params,
+      d_pripar         LIKE pri_params,
+      d_lines          TYPE i,
+      d_rows           TYPE i,
+      d_lay(16),
+      d_val,
+* fin variables función de impresión.
+      d_modulo         TYPE i,
+      d_saltos         TYPE i,
+      d_dialog(1),
+      d_contador(2)    TYPE n,
+      d_fecha_mod(1), "Flag para Fecha de última modificación
+*Variables para comprobar si los decimales son 0.
+      d_numero_ent(15),
+      d_entera(10),
+      d_decimal(4),
+      d_decimal_f      TYPE f,
+      d_flag_dec(1), "Se marca a X si hay alguna línea CON decimales
+      d_entr_posi      LIKE sy-tabix,       "Entradas de i_text_posicion
+      d_longitud_texto LIKE sy-tabix,
+      d_flag_texto(1),
+      d_lineas         LIKE sy-tabix,          "Lineas del texto adicional.
+      d_entradas_ta    LIKE sy-tabix. "Lineas de  tabla de texto adicional.
+
+*----------------------------------------------------------------------*
+* CONSTANTES
+*----------------------------------------------------------------------*
+CONSTANTS: c_bstyp_l(1)   VALUE 'L',
+           c_clase_con    LIKE a017-kschl VALUE 'PB00', "Precio Bruto
+           c_clase_ind    LIKE a017-kschl VALUE 'Zxxx',
+           c_clase_cer    LIKE PRCD_ELEMENTS-kschl VALUE 'PBXX', "Precio Bruto
+           c_kappl        LIKE a016-kappl VALUE 'M', "Compras
+*Constantes para función de búsqueda de textos
+           c_obj          LIKE thead-tdobject VALUE 'EKKO', "Textos de Cabecera
+           c_obj_pos      LIKE thead-tdobject VALUE 'EKPO', "Textos de Pos.
+           c_id_cod       LIKE thead-tdid VALUE 'L10',
+           c_id_ob        LIKE thead-tdid VALUE 'L01',
+           c_id_em        LIKE thead-tdid VALUE 'L04',
+           c_id_en        LIKE thead-tdid VALUE 'L06',
+           c_id_cpag      LIKE thead-tdid VALUE 'L08',
+           c_id_plaent    LIKE thead-tdid VALUE 'L09',
+*Textos para pedido cerrado
+           c_id_cod_pc    LIKE thead-tdid VALUE 'F10',
+           c_id_ob_pc     LIKE thead-tdid VALUE 'F01',
+           c_id_ob_px     LIKE thead-tdid VALUE 'F02',
+
+           c_id_en_pc     LIKE thead-tdid VALUE 'F06',
+           c_id_cpag_pc   LIKE thead-tdid VALUE 'F08',
+           c_id_plaent_pc LIKE thead-tdid VALUE 'F09',
+*Texto adicional para una página adicional en los pedidos.
+           c_id_pe_ta     LIKE thead-tdid VALUE 'L15',
+           c_id_pc_ta     LIKE thead-tdid VALUE 'F15'.
+DATA  numlin(9).
+DATA  v_return(1).
+DATA: contped(3) TYPE n VALUE 1.
+DATA: d_num TYPE i.
+*----------------------------------------------------------------------*
+*DEFINICIÓN DE PANTALLA DE SELECCIÓN
+*----------------------------------------------------------------------*
+SELECTION-SCREEN: BEGIN OF BLOCK marco WITH FRAME TITLE TEXT-001.
+SELECTION-SCREEN: SKIP.
+SELECT-OPTIONS: p_ebeln FOR ekko-ebeln  OBLIGATORY MATCHCODE OBJECT mekk
+                                                         MEMORY ID vrt.
+
+PARAMETERS: p_fecha LIKE sy-datum OBLIGATORY.
+SELECTION-SCREEN: SKIP.
+PARAMETERS: p_rb_pvi LIKE d_rb RADIOBUTTON GROUP prec.
+PARAMETERS: p_rb_pvf LIKE d_rb RADIOBUTTON GROUP prec.
+PARAMETERS: p_rb_his LIKE d_rb RADIOBUTTON GROUP prec.
+SELECTION-SCREEN: SKIP.
+PARAMETERS: p_aedat LIKE ekpo-aedat.
+
+*Radiobotton de ordenación por posición o referencia.
+SELECTION-SCREEN: SKIP.
+*PARAMETERS: p_desglo AS CHECKBOX DEFAULT 'X'.
+PARAMETERS: archi LIKE vn_t685b-tdarmod DEFAULT 1.
+PARAMETERS: nofirmas AS CHECKBOX DEFAULT ' '.
+SELECTION-SCREEN: END OF BLOCK marco.
+
+************************************************************************
+*                  LOGICA DEL PROGRAMA
+************************************************************************
+*----------------------------------------------------------------------*
+* VALIDACIONES DE PARAMETROS
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+*Validación de fecha de última modificación de la posición
+  IF p_aedat IS INITIAL.
+    d_fecha_mod = '%'.
+  ELSE.
+    d_fecha_mod = '*'.
+  ENDIF.
+*Validación del nº de documento
+  SELECT COUNT(*) INTO d_num FROM ekko WHERE ebeln IN p_ebeln
+                            AND   loekz = space. "Indicador de borrado
+  IF sy-subrc <> 0.
+    MESSAGE ID 'SE' TYPE 'E' NUMBER '451'.
+*  ELSE.
+*    IF D_NUM > 1.
+*      MESSAGE ID 'ZP' TYPE 'W' NUMBER '999' WITH TEXT-019.
+*    ENDIF.
+  ENDIF.
+
+* Comprobamos que los pedidos a imprimir no necesitan ser liberados.
+  SELECT * FROM ekko
+      WHERE ebeln IN p_ebeln.
+*   Pedido sujeto a estr. de liberación
+    IF NOT ekko-frggr IS INITIAL.
+*     Comprobamos que el estatus no es el de bloqueado (X).
+      IF ekko-frgke = 'X'.
+        MESSAGE ID 'M8' TYPE 'E' NUMBER '407' WITH ekko-ebeln.
+      ENDIF.
+    ENDIF.
+  ENDSELECT.
+
+*----------------------------------------------------------------------*
+* INICIALIZACION ANTES DE PEDIR LOS PARAMETROS
+*----------------------------------------------------------------------*
+INITIALIZATION.
+  p_rb_pvi = 'X'.
+
+  p_fecha = sy-datum.
+  DATA: d_uname LIKE sy-uname.
+  MOVE sy-uname TO d_uname.
+*buscamos u numero de personal
+  SELECT SINGLE * FROM usr21 WHERE bname = d_uname.
+  IF sy-subrc = 0.
+    SELECT SINGLE * FROM adr6 WHERE addrnumber = usr21-addrnumber AND
+    persnumber = usr21-persnumber.
+    IF sy-subrc = 0.
+      SELECT SINGLE * FROM pa0105 WHERE usrid_long =  adr6-smtp_addr
+      AND subty = '0010' AND begda <= sy-datum
+         AND endda >= sy-datum.
+      IF sy-subrc = 0.
+        MOVE pa0105-pernr TO numerop.
+      ENDIF.
+    ENDIF.
+    IF numerop = 0.
+      SELECT * FROM adcp WHERE addrnumber = usr21-addrnumber AND
+      persnumber = usr21-persnumber.
+        MOVE adcp-roomnumber TO numerop.
+      ENDSELECT.
+    ENDIF.
+    CALL FUNCTION 'SUSR_USER_PARAMETERS_GET'
+      EXPORTING
+        user_name       = sy-uname
+*       WITH_TEXT       =
+      TABLES
+        user_parameters = ls_para.
+*         EXCEPTIONS
+*           USER_NAME_NOT_EXIST       = 1
+*           OTHERS                    = 2
+    .
+    IF sy-subrc = 0.
+      LOOP AT ls_para WHERE parid = 'PER'.
+        numerop  = ls_para-parva.
+      ENDLOOP.
+    ENDIF.
+
+  ENDIF.
+*----------------------------------------------------------------------*
+* START-OF-SELECTION
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+  num = 0.
+
+  REFRESH i_linea.
+
+  SELECT * FROM ekko WHERE ebeln IN p_ebeln
+                     AND loekz = space.
+    CLEAR r_ekko.
+    SELECT SINGLE * FROM lfa1 WHERE lifnr = ekko-lifnr.
+    r_ekko-ebeln = ekko-ebeln.
+    r_ekko-ihrez = ekko-ihrez.
+    r_ekko-verkf = ekko-verkf.
+    r_ekko-kdate = ekko-kdate."Plazo de entrega para pedidos cerrados
+    r_ekko-lifnr = ekko-lifnr.
+    r_ekko-bstyp = ekko-bstyp. "Plan de entrega o pedido cerrado, L ó F
+    r_ekko-bedat = ekko-bedat.
+    r_ekko-waers = ekko-waers.
+    r_ekko-inco1 = ekko-inco1.
+    r_ekko-inco2 = ekko-inco2.
+    r_ekko-zterm = ekko-zterm.
+    r_ekko-spras = ekko-spras.
+    r_ekko-knumv = ekko-knumv. "Condición en el caso de pedido cerrado
+    r_ekko-angnr = ekko-angnr.
+    r_ekko-unsez = ekko-unsez.
+    r_ekko-bukrs = ekko-bukrs.
+    r_ekko-name1 = lfa1-name1.
+    r_ekko-memory = ekko-memory.
+    IF ekko-bstyp = 'F'.
+      r_ekko-frggr  = ekko-frggr .
+      r_ekko-frgrl  = ekko-frgrl.
+      ekko-revno = 0.
+    ENDIF.
+    r_ekko-revno = ekko-revno.
+    PERFORM seleccion_posiciones.
+*ABIERTOS
+    IF r_ekko-bstyp <> 'F'.
+      PERFORM seleccion_condiciones.
+      PERFORM datos_posiciones_seleccion.
+    ELSE.                                "Pedido cerrado
+      PERFORM seleccion_condiciones_ped.
+      PERFORM datos_posiciones_seleccion_ped.
+    ENDIF.
+    PERFORM datos_proveedor.
+
+  ENDSELECT.
+
+  PERFORM statuspedido.
+  PERFORM impresion_linea.
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CABECERA_DATOS
+*&---------------------------------------------------------------------*
+* Cabecera de la pantalla de selección de condiciones a imprimir       *
+*&---------------------------------------------------------------------*
+*&      Form  SELECCION_POSICIONES
+*&---------------------------------------------------------------------*
+*  Selección de posiciones del plan de entrega o del pedido cerrado    *
+* indicado en la pantalla de selección.
+*----------------------------------------------------------------------*
+FORM seleccion_posiciones.
+  REFRESH i_ekpo.
+  SELECT * FROM ekpo WHERE ebeln = r_ekko-ebeln
+                       AND ( aedat => p_aedat
+                        OR  aedat LIKE d_fecha_mod )
+                       AND loekz = space.
+    CLEAR i_ekpo.
+    i_ekpo-ebeln = ekpo-ebeln.
+    i_ekpo-ebelp = ekpo-ebelp.
+    i_ekpo-banfn = ekpo-banfn.
+    i_ekpo-bnfpo = ekpo-bnfpo.
+
+    i_ekpo-inco1 = ekpo-inco1.
+    i_ekpo-inco2 = ekpo-inco2.
+
+
+    i_ekpo-matnr = ekpo-matnr.
+    i_ekpo-fplnr = ekpo-fplnr .
+    i_ekpo-txz01 = ekpo-txz01.
+    i_ekpo-matkl = ekpo-matkl.
+    i_ekpo-netpr = ekpo-netpr.         "Precio neto de la posición
+    i_ekpo-retpo = ekpo-retpo.
+    i_ekpo-peinh = ekpo-peinh.
+    i_ekpo-ktmng = ekpo-ktmng.         " Cantidad entrega
+    i_ekpo-menge = ekpo-menge.         " Cantidad pedido cerrado
+    i_ekpo-bprme = ekpo-bprme.         "Unidad de la cantidad
+    i_ekpo-aedat = ekpo-aedat.    "Fecha última modificacion, pantalla
+    i_ekpo-werks = ekpo-werks.         "de selección
+    i_ekpo-adrnr = ekpo-adrnr.
+    i_ekpo-pstyp = ekpo-pstyp.
+    IF num <> 0 AND ekpo-banfn <> 0.
+      READ TABLE tabs WITH KEY banfn = ekpo-banfn bnfpo = ekpo-bnfpo.
+      IF sy-subrc = 0.
+        APPEND i_ekpo.
+      ENDIF.
+    ELSE.
+
+      APPEND i_ekpo.
+    ENDIF.
+    APPEND i_ekpo TO i_ekpo_tot.
+  ENDSELECT.
+* Si tiene posiciones lo añadimos a la lista de pedidos
+  IF sy-subrc = 0.
+    APPEND r_ekko.
+  ENDIF.
+
+
+*  DESCRIBE TABLE I_EKPO LINES D_ENTRADAS.
+*  IF D_ENTRADAS = 0.
+*    MESSAGE S043.
+*    EXIT.
+*  ENDIF.
+ENDFORM.                               " SELECCION_POSICIONES
+*&---------------------------------------------------------------------*
+*&      Form  SELECCION_CONDICIONES
+*&---------------------------------------------------------------------*
+* Selección de las condiciones de las posiciones para plan de entrega  *
+*----------------------------------------------------------------------*
+FORM seleccion_condiciones.
+  REFRESH i_condiciones.
+  LOOP AT i_ekpo.
+    REFRESH i_aux_cond.
+    IF i_ekpo-pstyp NE '2'.
+      SELECT * FROM a016 WHERE kappl = c_kappl
+                          AND  kschl = c_clase_con
+                          AND  evrtn = r_ekko-ebeln
+                          AND  evrtp = i_ekpo-ebelp.
+        CLEAR i_aux_cond.
+        i_aux_cond-ebelp = i_ekpo-ebelp.
+        i_aux_cond-datab = a016-datab.
+        i_aux_cond-datbi = a016-datbi.
+        i_aux_cond-knumh = a016-knumh.
+        APPEND i_aux_cond.
+      ENDSELECT.
+      IF sy-subrc <> 0 AND r_ekko-bstyp = 'A'.
+        i_aux_cond-ebelp = i_ekpo-ebelp.
+        APPEND i_aux_cond.
+      ENDIF.
+      d_flag = space.
+      PERFORM validacion_fecha.
+*   Consigna.
+    ELSE.
+      SELECT SINGLE * FROM ekko
+               WHERE ebeln = i_ekpo-ebeln.
+      SELECT * FROM a017   WHERE kappl = c_kappl
+                           AND kschl = c_clase_con
+                           AND lifnr = ekko-lifnr
+                           AND matnr = i_ekpo-matnr
+                           AND werks = i_ekpo-werks
+                           AND esokz = '2'.
+        CLEAR i_aux_cond.
+        i_aux_cond-ebelp = i_ekpo-ebelp.
+        i_aux_cond-datab = a017-datab.
+        i_aux_cond-datbi = a017-datbi.
+        i_aux_cond-knumh = a017-knumh.
+        APPEND i_aux_cond.
+      ENDSELECT.
+      d_flag = space.
+      PERFORM validacion_fecha.
+
+
+    ENDIF.
+  ENDLOOP.
+  LOOP AT i_condiciones.
+*Precio Bruto del proveedor para cada condición, moneda y base
+    SELECT * FROM konp WHERE knumh = i_condiciones-knumh
+                       AND  kschl = c_clase_con
+                       AND loevm_ko = space. "Indicador de borrado
+      IF i_ekpo-retpo = 'X'.
+        i_condiciones-precio_prov = konp-kbetr * - 1.
+
+      ELSE.
+        i_condiciones-precio_prov = konp-kbetr.
+      ENDIF.
+      SELECT SINGLE * FROM tcurx WHERE currkey = konp-konwa.
+      IF sy-subrc = 0.
+        IF tcurx-currdec = 0.
+          "Ejemplo: El yen (JYP) hay que multiplicarlo por 100
+          i_condiciones-precio_prov = i_condiciones-precio_prov * 100 .
+        ELSEIF tcurx-currdec = 1.
+          i_condiciones-precio_prov = i_condiciones-precio_prov / 10 .
+        ENDIF.
+      ENDIF.
+      i_condiciones-base = konp-kpein.
+      i_condiciones-moneda = konp-konwa.
+    ENDSELECT.
+    IF  i_condiciones-precio_prov = 0.
+      SELECT * FROM konp WHERE knumh = i_condiciones-knumh
+                         AND  kschl = 'UTIL'
+                         AND loevm_ko = space. "Indicador de borrado
+        i_condiciones-precio_prov = konp-kbetr.
+        IF konp-kpein = 0.
+          konp-kpein = 1.
+        ENDIF.
+        i_condiciones-base = konp-kpein.
+        i_condiciones-moneda = konp-konwa.
+      ENDSELECT.
+    ENDIF.
+*incoterms
+    SELECT SINGLE * FROM konh WHERE knumh = i_condiciones-knumh
+                               AND kappl = c_kappl
+                               AND kschl = c_clase_con.
+    IF sy-subrc = 0.
+*****************************************************
+      IF konh-revno <> space.
+        i_condiciones-revno = konh-revno.
+      ENDIF.
+*****************************************************
+      IF konh-inco1 <> space.
+        i_condiciones-inco1 = konh-inco1.
+        i_condiciones-inco2 = konh-inco2.
+      ENDIF.
+      i_condiciones-banfn = konh-banfn.
+      i_condiciones-bnfpo = konh-bnfpo.
+
+      i_condiciones-impuesto = konh-impuesto.
+
+    ENDIF.
+
+    i_ekpo-aedat = konh-erdat.
+*Condición del precio ZIND
+    SELECT * FROM konp WHERE knumh = i_condiciones-knumh
+                       AND  kschl = c_clase_ind
+                       AND loevm_ko = space. "Indicador de borrado
+      i_condiciones-cant_zind = konp-kbetr.
+      i_condiciones-base_zind = konp-kpein.
+      i_condiciones-mond_zind = konp-konwa.
+    ENDSELECT.
+    IF num <> 0.
+      indice = sy-tabix.
+      READ TABLE tabs WITH KEY banfn = i_condiciones-banfn bnfpo =
+i_condiciones-bnfpo.
+      IF sy-subrc <> 0.
+        DELETE i_condiciones INDEX indice.
+      ELSE.
+        MODIFY i_condiciones.
+        APPEND i_condiciones TO i_condiciones_tot.
+
+      ENDIF.
+    ELSE.
+      MODIFY i_condiciones.
+      APPEND i_condiciones TO i_condiciones_tot.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.                               " SELECCION_CONDICIONES
+*&---------------------------------------------------------------------*
+*&      Form  VALIDACION_FECHA
+*&---------------------------------------------------------------------*
+*  Validación de la fecha de vigencia indicada en la pantalla de       *
+* selección con respecto a las fechas de las condiciones.              *
+*----------------------------------------------------------------------*
+FORM validacion_fecha.
+*Se diferencian los casos dependiendo del radiobotton pulsado
+  SORT i_aux_cond ASCENDING BY datab.
+  LOOP AT i_aux_cond.
+    CLEAR i_condiciones.
+*vigente
+    IF r_ekko-bstyp = 'A'.
+      i_condiciones-ebelp = i_aux_cond-ebelp.
+      i_condiciones-datab = i_aux_cond-datab.
+      i_condiciones-knumh = i_aux_cond-knumh.
+      APPEND i_condiciones.
+      EXIT.
+    ELSE.
+      IF p_rb_pvi = 'X'.
+        IF i_aux_cond-datab <= p_fecha AND
+                i_aux_cond-datbi >= p_fecha.
+          i_condiciones-ebelp = i_aux_cond-ebelp.
+          i_condiciones-datab = i_aux_cond-datab.
+          i_condiciones-knumh = i_aux_cond-knumh.
+          APPEND i_condiciones.
+          EXIT.
+        ENDIF.
+
+*vigentes y futuros
+      ELSEIF p_rb_pvf = 'X'.
+        IF d_flag = 'X'. "Después de la 1ª fecha correcta, introduzco
+          " todas las demás en i_condiciones
+          i_condiciones-ebelp = i_aux_cond-ebelp.
+          i_condiciones-datab = i_aux_cond-datab.
+          i_condiciones-knumh = i_aux_cond-knumh.
+          APPEND i_condiciones.
+        ELSE.
+*SI SON FUTUROS Y ES LA PRIMER PRECIO
+*antes                      <=
+          IF i_aux_cond-datab <= p_fecha AND
+             i_aux_cond-datbi >= p_fecha.
+            i_condiciones-ebelp = i_aux_cond-ebelp.
+            i_condiciones-datab = i_aux_cond-datab.
+            i_condiciones-knumh = i_aux_cond-knumh.
+            APPEND i_condiciones.
+            d_flag = 'X'.
+            "Tras el primer resultado positivo, marco flag.
+*
+          ELSE.
+            IF i_aux_cond-datab > p_fecha.
+              i_condiciones-ebelp = i_aux_cond-ebelp.
+              i_condiciones-datab = i_aux_cond-datab.
+              i_condiciones-knumh = i_aux_cond-knumh.
+              APPEND i_condiciones.
+              d_flag = 'X'.
+              "Tras el primer resultado positivo, marco flag.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ELSEIF p_rb_his = 'X'.
+        i_condiciones-ebelp = i_aux_cond-ebelp.
+        i_condiciones-datab = i_aux_cond-datab.
+        i_condiciones-datbi = i_aux_cond-datbi.
+        i_condiciones-knumh = i_aux_cond-knumh.
+        APPEND i_condiciones.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.                               " VALIDACION_FECHA
+*&---------------------------------------------------------------------*
+*&      Form  SELECCION_CONDICIONES_PED
+*&---------------------------------------------------------------------*
+* Selección de las condiciones de las posiciones para pedido cerrado   *
+*----------------------------------------------------------------------*
+FORM seleccion_condiciones_ped.
+  REFRESH i_dat_pos_cer.
+  LOOP AT i_ekpo.
+    CLEAR i_dat_pos_cer.
+*Se toma el precio neto y sus datos de moneda y base
+    SELECT * FROM PRCD_ELEMENTS WHERE knumv = r_ekko-knumv  "una entrada
+                       AND   kposn = i_ekpo-ebelp
+                       AND   kschl = c_clase_cer
+                       AND   kappl = 'M'.
+      i_dat_pos_cer-ebelp = i_ekpo-ebelp.
+      IF i_ekpo-retpo = 'X'.
+        i_dat_pos_cer-precio_prov = PRCD_ELEMENTS-kbetr * - 1.
+
+      ELSE.
+        i_dat_pos_cer-precio_prov = PRCD_ELEMENTS-kbetr.
+      ENDIF.
+      i_dat_pos_cer-base = PRCD_ELEMENTS-kpein.
+      i_dat_pos_cer-moneda = PRCD_ELEMENTS-waers.
+    ENDSELECT.
+*Se busca la condición de impuesto no deducicle ZIND.
+    SELECT * FROM PRCD_ELEMENTS WHERE knumv = r_ekko-knumv  "una entrada
+                       AND   kposn = i_ekpo-ebelp
+                       AND   kschl = c_clase_ind
+                       AND   kappl = 'M'.
+      i_dat_pos_cer-cant_zind = PRCD_ELEMENTS-kbetr.
+      i_dat_pos_cer-base_zind = PRCD_ELEMENTS-kpein.
+      i_dat_pos_cer-mond_zind = PRCD_ELEMENTS-waers.
+    ENDSELECT.
+*Fecha del pedido
+    SELECT * FROM eket WHERE ebeln = r_ekko-ebeln
+                       AND   ebelp = i_ekpo-ebelp.
+    ENDSELECT.
+    IF sy-subrc = 0.
+      i_dat_pos_cer-bedat = eket-bedat.
+    ENDIF.
+    APPEND i_dat_pos_cer.
+    APPEND i_dat_pos_cer TO i_dat_pos_cer_tot.
+  ENDLOOP.
+ENDFORM.                               " SELECCION_CONDICIONES_PED
+*&---------------------------------------------------------------------*
+*&      Form  SELECCION_ZICM
+*&---------------------------------------------------------------------*
+* Selección del Zicm para imprimir en el listado. Se selecciona        *
+* cualquiera porque se supone que todos del mismo plan de entregas son *
+* el mismo.
+*----------------------------------------------------------------------*
+*form seleccion_zicm.
+*  loop at i_condiciones.
+*    if i_condiciones-cant_zicm <> space.
+*      r_datos_ad-cant_zicm = i_condiciones-cant_zicm.
+*      exit.
+*    endif.
+*  endloop.
+*endform.                               " SELECCION_ZICM
+*&---------------------------------------------------------------------*
+*&      Form  DATOS_POSICIONES_SELECCION
+*&---------------------------------------------------------------------*
+*  Se copian a la tabla interna i_lineas los datos a mostrar. En ésta  *
+* se seleccionan las condiciones de las posiciones a imprimir.Plan Entr*
+*----------------------------------------------------------------------*
+FORM datos_posiciones_seleccion.
+  CLEAR i_linea.
+  LOOP AT i_ekpo.
+    i_linea-ebeln = r_ekko-ebeln.
+    i_linea-memory = r_ekko-memory.
+    i_linea-ebelp = i_ekpo-ebelp.
+    i_linea-matnr = i_ekpo-matnr.
+*Mod.Javi Arce.Nov11.PS122712.Añadir Proyecto (Jerarq.Producto)
+    SELECT SINGLE prdha INTO i_linea-prdha
+      FROM mara
+      WHERE matnr = i_ekpo-matnr.
+*End Mod.Javi Arce.Nov11.PS122712.
+    i_linea-txz01 = i_ekpo-txz01.
+    LOOP AT i_condiciones WHERE ebelp = i_ekpo-ebelp.
+      i_linea-precio_prov = i_condiciones-precio_prov /
+                            i_condiciones-base.
+      i_linea-moneda = i_condiciones-moneda.
+
+      i_linea-datab = i_condiciones-datab.
+      i_linea-datbi = i_condiciones-datbi.
+      i_linea-knumh = i_condiciones-knumh.
+      i_linea-banfn = i_condiciones-banfn.
+      i_linea-bnfpo = i_condiciones-bnfpo.
+      i_linea-impuesto = i_condiciones-impuesto.
+************************************************************
+      i_linea-revno = i_condiciones-revno.
+************************************************************
+      IF i_condiciones-inco1 <> space.
+        i_linea-inco1 = i_condiciones-inco1.
+        i_linea-inco2 = i_condiciones-inco2.
+
+      ELSE.
+        IF i_ekpo-inco1 <> space.
+          i_linea-inco1 = i_ekpo-inco1.
+          i_linea-inco2 = i_ekpo-inco2.
+        ELSE.
+
+          i_linea-inco1 = r_ekko-inco1.
+          i_linea-inco2 = r_ekko-inco2.
+        ENDIF.
+      ENDIF.
+      i_linea-lifnr = r_ekko-lifnr.
+      i_linea-name1 = r_ekko-name1.
+      i_linea-bukrs = r_ekko-bukrs.
+      i_linea-bstyp = r_ekko-bstyp.
+      i_linea-werks = i_ekpo-werks.
+      i_linea-pstyp = i_ekpo-pstyp.
+      i_linea-matkl = i_ekpo-matkl.
+      i_linea-frgrl = r_ekko-frgrl.
+      APPEND i_linea.
+
+    ENDLOOP.
+
+  ENDLOOP.
+ENDFORM.                               " DATOS_POSICIONES_SELECCION
+*&---------------------------------------------------------------------*
+*&      Form  DATOS_POSICIONES_SELECCION_PED
+*&---------------------------------------------------------------------*
+*  Se copian a la tabla interna i_lineas los datos a mostrar. En ésta  *
+* se seleccionan las condiciones de las posiciones a imprimir, para    *
+* pedido cerrado.
+*----------------------------------------------------------------------*
+FORM datos_posiciones_seleccion_ped.
+  CLEAR i_linea.
+  LOOP AT i_ekpo.
+    i_linea-ebeln = r_ekko-ebeln.
+    i_linea-ebelp = i_ekpo-ebelp.
+    i_linea-matnr = i_ekpo-matnr.
+    i_linea-inco1 = r_ekko-inco1.
+    i_linea-inco2 = r_ekko-inco2.
+    i_linea-txz01 = i_ekpo-txz01.
+    i_linea-lifnr = r_ekko-lifnr.
+    i_linea-name1 = r_ekko-name1.
+    i_linea-bukrs = r_ekko-bukrs.
+    i_linea-bstyp = r_ekko-bstyp.
+    i_linea-werks = i_ekpo-werks.
+    i_linea-pstyp = i_ekpo-pstyp.
+    i_linea-frgrl = r_ekko-frgrl.
+    i_linea-memory = r_ekko-memory.
+    READ TABLE  i_dat_pos_cer WITH KEY ebelp = i_ekpo-ebelp.
+    IF sy-subrc = 0.
+      i_linea-precio_prov = i_dat_pos_cer-precio_prov /
+                            i_dat_pos_cer-base.
+      i_linea-moneda = i_dat_pos_cer-moneda.
+      i_linea-datab = i_ekpo-aedat.
+*     PERFORM CALCULO_DECIMALES USING I_LINEA-MONEDA
+*                                      I_LINEA-PRECIO_PROV
+*                                      I_LINEA-DECIMALES.
+    ELSE.
+      i_linea-precio_prov = i_ekpo-netpr / i_ekpo-peinh.
+      i_linea-moneda = r_ekko-waers.
+      i_linea-datab = i_ekpo-aedat.
+      i_linea-matkl = i_ekpo-matkl.
+
+*      PERFORM CALCULO_DECIMALES USING I_LINEA-MONEDA
+*                                      I_LINEA-PRECIO_PROV
+*                                      I_LINEA-DECIMALES.
+    ENDIF.
+    SELECT SINGLE * FROM eban WHERE ebeln = i_ekpo-ebeln AND ebelp =
+i_ekpo-ebelp.
+    IF sy-subrc = 0.
+      i_linea-banfn = eban-banfn.
+      i_linea-bnfpo = eban-bnfpo.
+    ENDIF.
+    APPEND i_linea.
+  ENDLOOP.
+ENDFORM.                               " DATOS_POSICIONES_SELECCION_PED
+*&---------------------------------------------------------------------*
+*&      Form  IMPRESION_LINEA
+*&---------------------------------------------------------------------*
+*  Impresión en pantalla de I_Linea para selección  de posiciones      *
+*----------------------------------------------------------------------*
+FORM impresion_linea.
+  MOVE 'X' TO is_u_layout-colwidth_optimize.
+  MOVE 'X' TO is_u_layout-zebra.
+  MOVE 'XSELP' TO is_u_layout-box_fieldname.
+* ABG Inc 265995 15.01.2014
+*  move 'COLOR' to is_u_layout-coltab_fieldname.
+* Fin Inc 265995
+  MOVE 'X' TO s_grid_settings-edt_cll_cb.
+
+* MOSTRAMOS EL ALV
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program       = 'ZPULIPL3NEW'
+      i_callback_pf_status_set = 'STATUS'        " COMMENTED BY KARAN M 102690
+      i_callback_user_command  = 'USER_COMMAND'
+*     I_CALLBACK_TOP_OF_PAGE   = 'TOP_OF_PAGE'
+*     i_grid_title             = title
+      i_structure_name         = 'ZPUARCOM4'
+      i_grid_settings          = s_grid_settings
+      is_layout                = is_u_layout
+      it_fieldcat              = ct_fieldcat
+      i_save                   = 'A'
+    TABLES
+      t_outtab                 = i_linea
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+
+
+ENDFORM.                               " IMPRESION_LINEA
+
+*&---------------------------------------------------------------------*
+*&      Form  DATOS_PROVEEDOR
+*&---------------------------------------------------------------------*
+*  Nombre y dirección del proveedor en el documento                    *
+*----------------------------------------------------------------------*
+FORM datos_proveedor.
+
+  CLEAR r_lifnr.
+
+  DATA: BEGIN OF result.
+          INCLUDE STRUCTURE addr1_val.
+        DATA: END OF result.
+
+  DATA: BEGIN OF selection.
+          INCLUDE STRUCTURE addr1_sel.
+        DATA: END OF selection.
+  IF ekko-adrnr <> 0.
+    selection-addrnumber = ekko-adrnr.
+    CALL FUNCTION 'ADDR_GET'
+      EXPORTING
+        address_selection = selection
+      IMPORTING
+        address_value     = result
+      EXCEPTIONS
+        parameter_error   = 1.
+* salida del resultado
+
+    r_lifnr-name1 = result-name1.
+
+    r_lifnr-name2 = result-name2.
+
+    r_lifnr-stras = result-street.
+    r_lifnr-ort01 =  result-city1.
+    r_lifnr-remark = result-remark.
+    r_lifnr-telf1 =  result-tel_number.
+    r_lifnr-telfx = result-fax_number.
+    SELECT SINGLE * FROM t005t WHERE land1 = result-country
+    AND spras = result-langu.
+    r_lifnr-land1 = result-country.
+    r_lifnr-landx = t005t-landx.
+    r_lifnr-pstlz = result-post_code1.
+
+    r_lifnr-lifnr =  r_ekko-lifnr.
+    r_lifnr-ebeln = r_ekko-ebeln.
+
+    r_lifnr-region = result-region.
+    SELECT SINGLE * FROM adr6 WHERE addrnumber = ekko-adrnr.
+    IF sy-subrc = 0.
+      r_lifnr-mail = adr6-smtp_addr.
+    ENDIF.
+******************
+  ELSE."Si no existe la entrada buscamos en el maestro de prov.
+    SELECT SINGLE * FROM lfa1 WHERE lifnr = r_ekko-lifnr.
+    IF sy-subrc = 0.
+      r_lifnr-ebeln = r_ekko-ebeln.
+      r_lifnr-lifnr = r_ekko-lifnr.
+      r_lifnr-name1 = lfa1-name1.
+      r_lifnr-name2 = lfa1-name2.
+      r_lifnr-stras = lfa1-stras.
+      r_lifnr-land1 = lfa1-land1.
+      r_lifnr-ort01 = lfa1-ort01.
+      r_lifnr-pstlz = lfa1-pstlz.
+      r_lifnr-remark = ekko-verkf.
+      r_lifnr-telf1 = lfa1-telf1.
+      r_lifnr-telfx = lfa1-telfx.
+      r_lifnr-region = lfa1-regio.
+      SELECT SINGLE * FROM adr6 WHERE addrnumber = lfa1-adrnr.
+      IF sy-subrc = 0.
+        r_lifnr-mail = adr6-smtp_addr.
+      ENDIF.
+
+    ENDIF.
+  ENDIF.
+  SELECT SINGLE * FROM lfm1 WHERE lifnr = ekko-lifnr.
+* MOD Maria Gonzalez 14/11/06 Comprobacion para que escriba el vendedor
+* del contrato
+  IF sy-subrc = 0 AND lfm1-verkf <> space AND r_lifnr-remark = space AND
+    r_ekko-verkf = space.
+    r_lifnr-remark = lfm1-verkf.
+    IF lfm1-telf1 <> space.
+      r_lifnr-telf1 = lfm1-telf1.
+    ENDIF.
+  ELSE.
+    r_lifnr-remark = r_ekko-verkf.
+    IF lfm1-telf1 <> space.
+      r_lifnr-telf1 = lfm1-telf1.
+    ENDIF.
+* FIN MGB
+
+  ENDIF.
+
+  SELECT SINGLE * FROM t005t WHERE spras = sy-langu
+                               AND land1 = r_lifnr-land1.
+  IF sy-subrc = 0.
+    r_lifnr-landx = t005t-landx.
+  ENDIF.
+
+  COLLECT r_lifnr.
+ENDFORM.                               " DATOS_PROVEEDOR
+*&---------------------------------------------------------------------*
+*&      Form  SELECCION_DATOS_IMPRESION
+*&---------------------------------------------------------------------*
+*Con las condiciones seleccionadas, tomamos los datos de los materiales*
+* a imprimir en la linea de detalle del documento.Pedido Abierto       *
+*----------------------------------------------------------------------*
+FORM seleccion_datos_impresion.
+  REFRESH i_detalle.
+  CLEAR tot_pedido.
+  LOOP AT i_linea WHERE xselp = 'X' AND ebeln = r_ekko-ebeln.
+    READ TABLE i_ekpo_tot WITH KEY ebeln = r_ekko-ebeln
+                                   ebelp = i_linea-ebelp.
+    IF sy-subrc = 0.
+      CLEAR i_detalle.
+      i_detalle-ebeln = i_ekpo_tot-ebeln.
+      i_detalle-ebelp = i_ekpo_tot-ebelp.
+*La cantidad se deja en blanco al ser un plan de entregas
+      i_detalle-matkl  = i_ekpo_tot-matkl.
+      i_detalle-meins = i_ekpo_tot-bprme.
+      i_detalle-matnr = i_ekpo_tot-matnr.
+      i_detalle-txz01 = i_ekpo_tot-txz01.
+      i_detalle-adrnr  = i_ekpo_tot-adrnr.
+      i_detalle-fplnr  = i_ekpo_tot-fplnr.
+      i_detalle-retpo  = i_ekpo_tot-retpo.
+      i_detalle-werks  = i_ekpo_tot-werks.
+      i_detalle-ktmng  = i_ekpo_tot-ktmng.
+      IF i_linea-inco1 = space AND i_ekpo_tot-inco1 <> space.
+        i_linea-inco1 = i_ekpo_tot-inco1.
+        i_linea-inco2 = i_ekpo_tot-inco2.
+      ENDIF.
+
+      i_detalle-inco1  = i_linea-inco1.
+      i_detalle-inco2  = i_linea-inco2.
+      i_detalle-precio_prov = i_linea-precio_prov.
+      i_detalle-decimales = i_linea-decimales.
+      READ TABLE i_condiciones_tot WITH KEY knumh = i_linea-knumh.
+      IF sy-subrc = 0.
+        i_detalle-waers = i_condiciones_tot-moneda.
+        i_detalle-datab = i_condiciones_tot-datab.
+        i_detalle-datbi = i_condiciones_tot-datbi.
+        i_detalle-knumh = i_condiciones_tot-knumh.
+        i_detalle-banfn = i_linea-banfn.
+        i_detalle-bnfpo = i_linea-bnfpo.
+        i_detalle-impuesto = i_linea-impuesto.
+        APPEND i_detalle.
+      ELSE. "Si no hay condiciones, moneda y fecha de Ekpo
+        i_detalle-waers = r_ekko-waers.
+        i_detalle-datab = r_ekko-bedat.
+        i_detalle-knumh = r_ekko-knumv.
+        APPEND i_detalle.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  DESCRIBE TABLE i_detalle LINES d_entradas.
+  IF d_entradas = 0 AND sy-tcode <> 'ZMD00'.
+    MESSAGE ID '06' TYPE 'E' NUMBER '103'.
+  ENDIF.
+ENDFORM.                               " SELECCION_DATOS_IMPRESION
+
+*&---------------------------------------------------------------------*
+*&      Form  IMPRESION_NEW
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM impresion_new .
+  RANGES: ebelp3 FOR ekpo-ebelp.
+  DATA: ent_retco(1),
+        ent_screen(1).
+  DATA: BEGIN OF ver OCCURS 0.
+  DATA: revno LIKE ekko-revno.
+  DATA: END OF ver.
+  indice = 0.
+  nast-objky = r_ekko-ebeln.
+
+  REFRESH t_a016.
+  REFRESH t_ebelp.
+  LOOP AT i_linea WHERE xselp = 'X' AND ebeln = r_ekko-ebeln.
+    t_a016-evrtn = i_linea-ebeln.
+    t_a016-evrtp = i_linea-ebelp.
+    t_a016-datab = i_linea-datab.
+    t_a016-datbi = i_linea-datbi.
+    t_a016-knumh = i_linea-knumh.
+    APPEND t_a016.
+    MOVE-CORRESPONDING i_linea TO t_ebelp.
+    APPEND t_ebelp.
+
+    READ TABLE ver WITH KEY revno = i_linea-revno.
+    IF sy-subrc <> 0.
+      ver-revno = i_linea-revno.
+      APPEND ver.
+    ENDIF.
+  ENDLOOP.
+*solo se deberia imprimir de una sola versión
+  DELETE ADJACENT DUPLICATES FROM ver.
+  DESCRIBE TABLE ver LINES indice.
+  IF indice > 1.
+    MESSAGE e821(wty) WITH i_linea-ebeln.
+*sólo puede seleccionar una versión para la acción &
+  ENDIF.
+
+  DELETE ADJACENT DUPLICATES FROM t_ebelp.
+
+*llamamos a la funcion de impresion , pasandole las posiciones a
+*imprimir.
+  CALL FUNCTION 'ZBAPI_PO_DISPLAY'
+    EXPORTING
+      ebeln    = r_ekko-ebeln
+      revno    = i_linea-revno
+      tcode    = 'PDF'
+      nofirmas = nofirmas
+      updnast  = 'X'
+      archi    = archi
+*  IMPORTING
+*     E_EKKO   =
+    TABLES
+      t_ebelp  = t_ebelp
+      t_a016   = t_a016.
+
+
+ENDFORM.                    " IMPRESION_NEW
+*&---------------------------------------------------------------------*
+*&      Form  LIBERAPEDIDO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM liberapedido .
+  DATA: codea LIKE sy-subrc.
+  DATA: msg LIKE massmsg.
+  READ TABLE i_detalle INDEX 1.
+  SELECT SINGLE * FROM ekko INTO CORRESPONDING FIELDS OF  cekko
+    WHERE ebeln = i_detalle-ebeln.
+
+
+  LOOP AT i_detalle.
+    MOVE-CORRESPONDING i_detalle TO t_ebelp.
+    APPEND t_ebelp.
+    MOVE-CORRESPONDING i_detalle TO t_a016.
+    t_a016-evrtn = i_detalle-ebeln.
+    t_a016-evrtp = i_detalle-ebelp.
+    APPEND t_a016.
+  ENDLOOP.
+
+  DELETE ADJACENT DUPLICATES FROM t_ebelp.
+  DELETE ADJACENT DUPLICATES FROM t_a016.
+*solicitamos autorizacion para el pedido y versión.
+*cada una de las posiciones de la a016 ya están marcadas con la versión
+*correspondiente
+  PERFORM avisobmw.
+  CALL FUNCTION 'ZBAPI_PO_REQUEST'
+    EXPORTING
+      t_ekko = cekko
+*     NOFIRMAS                 =
+    IMPORTING
+      msg    = msg
+      code   = codea
+    TABLES
+      t_ekpo = t_ebelp
+      t_a016 = t_a016.
+  IF codea <> 99.
+
+*ACTUALIZAMOS LA VERSIÓN
+    IF sy-subrc = 0.
+      SELECT SINGLE * FROM ekko INTO CORRESPONDING FIELDS OF  cekko
+         WHERE ebeln = i_detalle-ebeln.
+
+      LOOP AT t_a016.
+        READ TABLE i_linea WITH KEY knumh = t_a016-knumh ebeln =
+        t_a016-evrtn ebelp = t_a016-evrtp.
+        IF sy-subrc = 0.
+          i_linea-revno = cekko-revno.
+          MODIFY i_linea INDEX sy-tabix.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+    IF msg IS NOT INITIAL.
+*ACTUALIZAMOS LISTADO.
+      CONCATENATE msg-msgv2(10)  msg-msgv2+10(8) INTO msg-msgv2 SEPARATED
+      BY '/'.
+      MESSAGE i200(kpep) WITH '@08@' msg-msgv1 msg-msgv2 msg-msgv3.
+    ENDIF.
+    PERFORM enviapre.
+  ELSE.
+    MESSAGE i200(kpep) WITH '@0A@' msg-msgv1 msg-msgv2 msg-msgv3.
+
+  ENDIF.
+
+ENDFORM.                    " LIBERAPEDIDO
+*&---------------------------------------------------------------------*
+*&      Form  VALIDAAUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM validaaut.
+  TABLES: zhrwf_tasks.
+  DATA: BEGIN OF xekko OCCURS 10.
+          INCLUDE STRUCTURE ekko.
+        DATA:END OF xekko.
+
+
+*leemos la tabla de pedidos seleccioando anteriormente
+  IMPORT xekko FROM MEMORY ID 'XEKKO'.
+
+*verificamos si el pedido esta pendiente en la tabla de woflow
+  LOOP AT xekko.
+    CONCATENATE xekko-ebeln+3(7) xekko-revno+3(3) INTO vfnumt.
+    vfnum = vfnumt.
+*concatenamos el pedido y la versión
+
+    SELECT SINGLE * FROM zhrwf_tasks WHERE wfnum = vfnum AND wfapli =
+    'WF_POO' AND pernr = numerop.
+    IF sy-subrc <> 0.
+      DELETE xekko INDEX sy-tabix.
+    ENDIF.
+  ENDLOOP.
+
+*export XEKKO to MEMORY ID 'XEKKO'.
+
+ENDFORM.                    "VALIDAAUT
+*&---------------------------------------------------------------------*
+*&      Form  user_command
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->R_UCOMM      text
+*      -->RS_SELFIELD  text
+*----------------------------------------------------------------------*
+FORM user_command USING r_ucomm LIKE sy-ucomm
+                        rs_selfield TYPE slis_selfield .
+
+  rs_selfield-refresh    = 'X'.
+  rs_selfield-col_stable = 'X'.
+  rs_selfield-row_stable = 'X'.
+  READ TABLE i_linea INDEX rs_selfield-tabindex.
+  IF sy-subrc = 0.
+    i_linea-xselp = 'X'.
+    MODIFY i_linea INDEX sy-tabix.
+  ENDIF.
+  i_linea2[] = i_linea[].
+  SORT i_linea2.
+  IF  r_ucomm <> 'ENVIA'.
+    LOOP AT i_linea2 WHERE xselp = 'X'.
+      AT NEW ebeln.
+        r_ekko-ebeln = i_linea2-ebeln.
+
+        READ TABLE i_linea INDEX rs_selfield-tabindex.
+        IF i_linea-memory = ' '.
+          CASE r_ucomm.
+            WHEN 'AUT' OR 'NEW'.
+              PERFORM seleccion_datos_impresion.
+          ENDCASE.
+          CASE r_ucomm.
+            WHEN  'AUT'.
+              PERFORM liberapedido.
+            WHEN 'CANC'.
+              PERFORM cancelar.
+            WHEN 'ANUL'.
+              PERFORM anulacion.
+            WHEN 'FILE'.
+              PERFORM anexar.
+            WHEN  'NEW'.
+              PERFORM impresion_new.
+            WHEN  OTHERS.
+              READ TABLE i_linea INDEX rs_selfield-tabindex.
+              CASE rs_selfield-fieldname.
+                WHEN 'EBELN'.
+                  IF i_linea-bstyp = 'L'.
+                    PERFORM modifica.
+                  ELSE.
+                    PERFORM modificac.
+                  ENDIF.
+                WHEN 'STATUS'.
+                  PERFORM wfhistorico.
+
+              ENDCASE.
+          ENDCASE.
+        ELSE.
+
+          MESSAGE e045(mepo) WITH i_linea-ebeln.
+*   El pedido & no se ha completado aún
+
+        ENDIF.
+      ENDAT.
+    ENDLOOP.
+    PERFORM statuspedido.
+  ELSE.
+    PERFORM enviapre.
+  ENDIF.
+*----------------------------------------------------------------------*
+
+ENDFORM.                    "user_command
+*&---------------------------------------------------------------------*
+*&      Form  status
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->FTIP_EXCL  text
+*----------------------------------------------------------------------*
+FORM status USING ftip_excl TYPE kkblo_t_extab .
+  SET PF-STATUS 'STANDARD_FULLSCREEN'.
+ENDFORM.                    "status
+*&---------------------------------------------------------------------*
+*&      Form  STATUSPEDIDO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM statuspedido .
+  LOOP AT i_linea.
+    indice = sy-tabix.
+    i_linea-status = ' '.
+
+    IF i_linea-revno = space AND ( i_linea-bstyp = 'F' OR i_linea-bstyp = 'A' ).
+      i_linea-revno = '00000000'.
+    ENDIF.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = i_linea-revno
+      IMPORTING
+        output = i_linea-revno.
+*esto para todos los pedidos
+    CONCATENATE i_linea-ebeln i_linea-revno INTO vfnum.
+
+*ahora buscamos el wf
+    SELECT  * FROM  zhrwfah WHERE wfapli = 'WF_POO' AND  wfnum = vfnum
+    ORDER BY aedtm hora_graba ASCENDING.
+    ENDSELECT.
+    IF sy-subrc = 0.
+      CASE zhrwfah-decision.
+        WHEN 'CAN'.
+          i_linea-status = '@11@'.
+        WHEN 'INI'.
+          i_linea-status = '@0A@'.
+*EN CURSO
+        WHEN 'APP' OR 'APC'.
+          i_linea-status = '@09@'.
+
+        WHEN 'APT'.
+          i_linea-status = '@08@'.
+          IF  i_linea-frgrl = 'X'.
+            i_linea-status = '@1B@'.
+          ENDIF.
+
+      ENDCASE.
+    ENDIF.
+    i_linea-wfnum = vfnum.
+* si el status del pedido no es el correcto corregimos.
+
+    MODIFY i_linea INDEX indice.
+  ENDLOOP.
+ENDFORM.                    " STATUSPEDIDO
+*&---------------------------------------------------------------------*
+*&      Form  CANCELAR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM cancelar .
+  DATA: msgv1(50).
+  DATA: msgv2(10).
+  DATA l_answer(1).
+  FREE i_wf_po.
+*Start modification CSDPASAPD-909 by I08005 at 8 ene 2024
+
+  i_wf_po = NEW z_mm_wf_po( crear = abap_false
+                                wfapli = CONV #( 'WF_POO' )
+                                wfnum = CONV #( i_linea-wfnum )
+                                get_agentes = abap_true
+                              ).
+  IF i_wf_po IS NOT BOUND.
+    RETURN.
+  ENDIF.
+  DATA: "lt_firmas      TYPE TABLE OF zhrwfah,
+        ls_last_action TYPE zhrwfah.
+  i_wf_po->get_last_action(
+      IMPORTING
+        action = ls_last_action " Agentes del Workflow, historial de firmas
+    ).
+
+
+  l_answer = 'J'.
+
+
+
+*  SELECT SINGLE * FROM  zhrwfah WHERE wfapli = 'WF_POO' AND  wfnum =
+*  i_linea-wfnum  AND  ( decision = 'APC' OR decision = 'APT' OR decision
+*  = 'REJ' ).
+  IF ls_last_action-decision = 'APC' OR ls_last_action-decision = 'APT'
+     OR ls_last_action-decision = 'REJ'.
+*End modification CSDPASAPD-909 by I08005 at 8 ene 2024
+    SELECT SINGLE * FROM pa0002 WHERE pernr = ls_last_action-pernr  AND begda
+    <= sy-datum AND endda >= sy-datum.
+    IF sy-subrc = 0.
+      CONCATENATE pa0002-vorna  pa0002-nachn pa0002-nach2 INTO msgv1
+      SEPARATED BY space.
+    ENDIF.
+    WRITE ls_last_action-aedtm TO msgv2.
+    CONCATENATE TEXT-ca3 msgv1 msgv2 INTO msgv1 SEPARATED BY space.
+    CALL FUNCTION 'POPUP_TO_CONFIRM_STEP'
+      EXPORTING
+*       DEFAULTOPTION        = 'Y'
+        textline1 = msgv1
+        textline2 = TEXT-ca2
+        titel     = TEXT-can
+*       START_COLUMN         = 25
+*       START_ROW = 6
+*       CANCEL_DISPLAY       = 'X'
+      IMPORTING
+        answer    = l_answer.
+    .
+
+
+*   Centro & no tiene maestro de operaciones
+
+  ENDIF.
+  IF l_answer = 'J'.
+*    CREATE OBJECT i_wf_po
+*      EXPORTING
+*        crear      = abap_false
+*        wfapli     = 'WF_POO'
+*        wfnum      = i_linea-wfnum
+*      EXCEPTIONS
+*        not_valid  = 1
+*        not_exists = 2
+*        OTHERS     = 3.
+
+    d_action = 'CAN'.
+
+*debemos mandar un mail al iniciador
+*BUSCAMOS QUIEN LO A INICIADO.
+*Start modification CSDPASAPD-909 by I08005 at 8 ene 2024
+*    SELECT SINGLE * FROM  zhrwfah WHERE wfapli = 'WF_POO' AND  wfnum = i_linea-wfnum  AND  decision = 'INI'.
+*    IF sy-subrc = 0.
+*      numeroc = zhrwfah-pernr.
+*    ENDIF.
+    DATA: lt_acciones TYPE TABLE OF zhrwfah.
+    i_wf_po->get_firmas(
+      EXPORTING
+        historico = abap_false
+      IMPORTING
+        firmas    = lt_acciones
+    ).
+    ASSIGN  lt_acciones[ decision = 'INI' ] TO FIELD-SYMBOL(<lf_action_ini>).
+    IF <lf_action_ini> IS ASSIGNED.
+      numeroc = <lf_action_ini>-pernr.
+    ELSE.
+      RETURN.
+    ENDIF.
+
+*End modification CSDPASAPD-909 by I08005 at 8 ene 2024
+*    IF SY-SUBRC <> 0.
+*select single * from  ZHRWFAH WHERE WFAPLI = 'WF_POO' and  WFNUM =
+*I_LINEA-WFNUM and ( decision = 'APC' or decision = 'APT' ).
+*    ENDIF.
+    IF sy-subrc = 0.
+
+      CALL METHOD i_wf_po->complete_task
+        EXPORTING
+          pernr               = numeroc
+          decision            = d_action
+          observ              = d_comment
+          test                = ' '
+        IMPORTING
+          action              = l_zhrwfah
+          task                = l_task
+        EXCEPTIONS
+          not_found           = 1
+          exists              = 2
+          not_allowed         = 3
+          mail_error          = 4
+          mail_error_send     = 5
+          mail_error_address  = 6
+          mail_error_document = 7
+          OTHERS              = 8.
+
+      CASE sy-subrc.
+        WHEN 1.
+          WRITE:/'Error: Not found'.
+        WHEN 2.
+          WRITE:/'Error: exists'.
+        WHEN 3.
+          WRITE:/'Error: you are not allowed to cancel this PO request'.
+        WHEN 4.
+          WRITE:/ 'Error sending mail'.
+        WHEN 5.
+          WRITE:/ 'Error sending mail(5)'.
+        WHEN 6.
+          WRITE:/ 'Error sending mail [address]'.
+        WHEN 7.
+          WRITE:/ 'Error sending mail [document]'.
+        WHEN 8.
+          WRITE:/'Error: others'.
+        WHEN 0.
+          SELECT  * FROM ekpo WHERE ebeln = i_linea-ebeln AND ebelp = i_linea-ebelp AND agmem = 'REC'.
+            ekpo-agmem = space.
+            MODIFY ekpo.
+          ENDSELECT.
+*eliminamos la version de la konh.
+          READ TABLE i_linea WITH KEY xselp = 'X'.
+          IF sy-subrc = 0.
+            IF i_linea-pstyp NE '2'.
+              SELECT * FROM a016 WHERE kappl = c_kappl
+                                  AND  kschl = c_clase_con
+                                  AND  evrtn = i_linea-ebeln.
+                SELECT SINGLE * FROM konh WHERE knumh = a016-knumh
+                                                AND kappl = c_kappl
+                                                AND kschl = c_clase_con
+                                                AND revno =
+                                                i_linea-revno.
+                IF sy-subrc = 0.
+                  konh-revno = space.
+                  MODIFY konh.
+*                  commit work.
+
+                ENDIF.
+              ENDSELECT.
+*   Consigna.
+            ELSE.
+              SELECT * FROM ekpo WHERE ebeln = i_linea-ebeln.
+                SELECT * FROM a017   WHERE kappl = c_kappl
+                                     AND kschl = c_clase_con
+                                     AND lifnr = i_linea-lifnr
+                                     AND matnr = ekpo-matnr
+                                     AND werks = ekpo-werks
+                                     AND esokz = '2'.
+                  SELECT SINGLE * FROM konh WHERE knumh = a017-knumh
+                                                  AND kappl = c_kappl
+                                                  AND kschl =
+                                                  c_clase_con
+                                                  AND revno =
+                                                  i_linea-revno.
+                  IF sy-subrc = 0.
+                    konh-revno = space.
+                    MODIFY konh.
+*                  commit work.
+                  ENDIF.
+                ENDSELECT.
+              ENDSELECT.
+            ENDIF.
+            LOOP AT i_linea WHERE ebeln = i_linea-ebeln AND revno =
+            i_linea-revno.
+              i_linea-revno = space.
+              MODIFY i_linea INDEX sy-tabix.
+            ENDLOOP.
+            COMMIT WORK.
+          ENDIF.
+        WHEN OTHERS.
+      ENDCASE.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " CANCELAR
+*&---------------------------------------------------------------------*
+*&      Form  MODIFICA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM modifica .
+  REFRESH i_bdcdata.
+  PERFORM bdc_dynpro      USING 'SAPMM06E' '0205'.
+  PERFORM bdc_field       USING 'BDC_CURSOR'
+                          'RM06E-EVRTN'.
+  PERFORM bdc_field       USING 'BDC_OKCODE'
+                          '/00'.
+  PERFORM bdc_field       USING 'RM06E-EVRTN'
+                          i_linea-ebeln.
+  PERFORM bdc_dynpro      USING 'SAPMM06E' '0220'.
+  PERFORM bdc_field       USING 'BDC_CURSOR'
+                          'RM06E-EBELP'.
+  PERFORM bdc_field       USING 'BDC_OKCODE'
+                          '/00'.
+  PERFORM bdc_field       USING 'RM06E-EBELP'
+                          i_linea-ebelp.
+  PERFORM bdc_dynpro      USING 'SAPMM06E' '0220'.
+  PERFORM bdc_field       USING 'BDC_CURSOR'
+                          'RM06E-EVRTP(01)'.
+  PERFORM bdc_field       USING 'BDC_OKCODE'
+                          '=KO'.
+  PERFORM bdc_field       USING 'RM06E-EBELP'
+                          i_linea-ebelp.
+  PERFORM bdc_field       USING 'RM06E-TCSELFLAG(01)'
+                          'X'.
+  CALL TRANSACTION 'ME32L' USING i_bdcdata MODE 'E'.
+ENDFORM.                    " MODIFICA
+*&---------------------------------------------------------------------*
+*&      Form  bdc_dynpro
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->PROGRAM    text
+*      -->DYNPRO     text
+*----------------------------------------------------------------------*
+FORM bdc_dynpro USING program dynpro.
+  CLEAR i_bdcdata.
+  i_bdcdata-program  = program.
+  i_bdcdata-dynpro   = dynpro.
+  i_bdcdata-dynbegin = 'X'.
+  APPEND i_bdcdata.
+ENDFORM.                    "bdc_dynpro
+*&---------------------------------------------------------------------*
+*&      Form  BDC_FIELD
+*&---------------------------------------------------------------------*
+*        Insert field                                                  *
+*----------------------------------------------------------------------*
+FORM bdc_field USING fnam fval.
+  CLEAR i_bdcdata.
+  i_bdcdata-fnam = fnam.
+  i_bdcdata-fval = fval.
+  APPEND i_bdcdata.
+ENDFORM.                    "bdc_field
+*&---------------------------------------------------------------------*
+*&      Form  BDC_TRANSACTION
+*&---------------------------------------------------------------------*
+*        Start new transaction                                         *
+*----------------------------------------------------------------------*
+FORM bdc_transaction USING tcode.
+  CALL FUNCTION 'BDC_INSERT'
+    EXPORTING
+      tcode     = tcode
+    TABLES
+      dynprotab = i_bdcdata.
+ENDFORM.                    "bdc_transaction
+*&---------------------------------------------------------------------*
+*&      Form  MODIFICAC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM modificac .
+  IF i_linea-bstyp <> 'A'.
+    CALL FUNCTION 'ME_DISPLAY_PURCHASE_DOCUMENT'
+      EXPORTING
+        i_ebeln      = i_linea-ebeln
+        i_enjoy      = 'X'
+      EXCEPTIONS
+        not_found    = 1
+        no_authority = 2
+        invalid_call = 3
+        OTHERS       = 4.
+  ELSE.
+    SET PARAMETER ID 'ANF' FIELD i_linea-ebeln.
+    CALL TRANSACTION 'ME47' AND SKIP FIRST SCREEN.
+  ENDIF.
+
+ENDFORM.                    " MODIFICAC
+*&---------------------------------------------------------------------*
+*&      Form  ANULACION
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM anulacion .
+  SELECT SINGLE * FROM ekko WHERE ebeln = i_linea-ebeln.
+  IF sy-subrc = 0.
+    DELETE   FROM  zhrwfah WHERE wfapli = 'WF_POO' AND  wfnum =
+    i_linea-wfnum.
+    DELETE   FROM  zhrwfa WHERE wfapli = 'WF_POO' AND  wfnum =
+    i_linea-wfnum.
+    DELETE   FROM  zhrwf_tasks WHERE wfapli = 'WF_POO' AND  wfnum =
+    i_linea-wfnum.
+
+    ekko-frggr = ' '.
+    ekko-frgsx = ' '.
+    ekko-frgke = ' '.
+    ekko-frgrl = ' '.
+    ekko-frgzu = space.
+    ekko-procstat = '02'.
+    MODIFY ekko.
+  ENDIF.
+ENDFORM.                    " ANULACION
+*&---------------------------------------------------------------------*
+*&      Form  WFHISTORICO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM wfhistorico .
+  DATA: BEGIN OF tabs OCCURS 0.
+          INCLUDE STRUCTURE zbapifirmasx.
+        DATA: END OF tabs,
+        ls_usr03 TYPE usr03.
+  DATA(lo_wfpo) = NEW z_mm_wf_po( crear = abap_false
+                                  wfapli = CONV #( 'WF_POO' )
+                                  wfnum = CONV #( i_linea-wfnum )
+                                ).
+  DATA: lt_agentes TYPE TABLE OF zhrwfa,
+        lt_firmas  TYPE TABLE OF zhrwfah.
+  lo_wfpo->get_agentes( IMPORTING agentes = lt_agentes ).
+  lo_wfpo->get_firmas( IMPORTING firmas = lt_firmas ).
+
+  CLEAR tabs[].
+  LOOP AT lt_agentes INTO DATA(ls_agente).
+    CLEAR tabs.
+    MOVE-CORRESPONDING ls_agente TO tabs.
+    SELECT SINGLE * INTO @DATA(ls_p0002)
+      FROM pa0002
+     WHERE pernr = @ls_agente-pernr
+       AND begda <= @sy-datum
+       AND endda >= @sy-datum.
+    IF sy-subrc = 0.
+      tabs-name1 = |{ ls_p0002-vorna } { ls_p0002-nachn } | &&
+                   |{ ls_p0002-nach2 }|.
+    ELSE. "buscamos por usuario.
+      ls_usr03-bname = ls_agente-tipo+8(12).
+      CALL FUNCTION 'SUSR_USER_ADDRESS_READ'
+        EXPORTING
+          user_name              = ls_usr03-bname
+          read_db_directly       = ' '
+        IMPORTING
+          user_usr03             = ls_usr03
+        EXCEPTIONS
+          user_address_not_found = 1
+          OTHERS                 = 2.
+      IF sy-subrc = 0.
+        tabs-name1 = |{ ls_usr03-name1 } { ls_usr03-name2 }|.
+      ENDIF.
+    ENDIF.
+
+    tabs-decision = 'PEN'.
+    ASSIGN lt_firmas[ pernr = ls_agente-pernr ] TO FIELD-SYMBOL(<lf_firma>).
+    IF <lf_firma> IS ASSIGNED.
+      MOVE-CORRESPONDING <lf_firma> TO tabs.
+    ENDIF.
+    UNASSIGN <lf_firma>.
+
+    APPEND tabs.
+  ENDLOOP.
+*  SELECT * FROM zhrwfa WHERE wfapli = 'WF_POO' AND wfnum = i_linea-wfnum
+*  .
+*    SELECT SINGLE * FROM pa0002 WHERE pernr = zhrwfa-pernr  AND begda <=
+*    sy-datum AND endda >= sy-datum.
+*    IF sy-subrc = 0.
+*      CONCATENATE pa0002-vorna  pa0002-nachn pa0002-nach2 INTO
+*      tabs-name1 SEPARATED BY space.
+*    ELSE.
+*      DATA: usr033 LIKE usr03.
+*      usr033-bname = zhrwfa-tipo+8(12).
+*      CALL FUNCTION 'SUSR_USER_ADDRESS_READ'
+*        EXPORTING
+*          user_name              = usr033-bname
+*          read_db_directly       = ' '
+*        IMPORTING
+*          user_usr03             = usr033
+*        EXCEPTIONS
+*          user_address_not_found = 1
+*          OTHERS                 = 2.
+*
+*      CONCATENATE usr033-name1  usr033-name2 INTO   tabs-name1
+*                      SEPARATED BY space.
+*
+*    ENDIF.
+*    SELECT * FROM zhrwfah  WHERE wfapli = 'WF_POO' AND wfnum =
+*    i_linea-wfnum AND pernr = zhrwfa-pernr ORDER BY aedtm DESCENDING
+*    hora_graba DESCENDING.
+*      EXIT.
+*    ENDSELECT.
+*    IF sy-subrc = 0.
+*      MOVE-CORRESPONDING zhrwfah TO tabs.
+*      APPEND tabs.
+*    ELSE.
+*      MOVE-CORRESPONDING zhrwfa TO tabs.
+*      tabs-decision = 'PEN'.
+*      APPEND tabs.
+*    ENDIF.
+*  ENDSELECT.
+
+  CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+    EXPORTING
+      i_title               = TEXT-755
+      i_zebra               = 'X'
+      i_allow_no_selection  = 'X'
+      i_screen_start_column = 10
+      i_screen_start_line   = 10
+      i_screen_end_column   = 140
+      i_screen_end_line     = 20
+      i_tabname             = 'TABS'
+      i_structure_name      = 'ZBAPIFIRMASX'
+*IMPORTING
+*     ES_SELFIELD           =
+*     e_exit                = sal
+    TABLES
+      t_outtab              = tabs.
+ENDFORM.                    " WFHISTORICO
+*&---------------------------------------------------------------------*
+*&      Form  ANEXAR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM anexar .
+  DATA: manager TYPE REF TO cl_gos_manager,
+        obj     TYPE borident,
+        ok_code TYPE sy-ucomm.
+
+  CLEAR obj.
+
+  obj-objkey =   i_linea-ebeln.
+
+  CASE i_linea-bstyp.
+    WHEN 'L'.
+      obj-objtype = 'BUS2013'.
+    WHEN 'F'.
+      obj-objtype = 'BUS2012'.
+    WHEN 'A'.
+      obj-objtype = 'BUS2011'.
+  ENDCASE.
+
+  CREATE OBJECT manager
+    EXPORTING
+      ip_no_commit = 'R'
+    EXCEPTIONS
+      OTHERS       = 1.
+
+  CALL METHOD manager->start_service_direct
+    EXPORTING
+      ip_service       = 'PCATTA_CREA'
+      is_object        = obj
+    EXCEPTIONS
+      no_object        = 1
+      object_invalid   = 2
+      execution_failed = 3
+      OTHERS           = 4.
+
+ENDFORM.                    " ANEXAR
+*&---------------------------------------------------------------------*
+*&      Form  AVISOBW
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM avisobmw.
+
+  DATA: sw(1).
+  sw = 0.
+  LOOP AT i_detalle WHERE banfn <> space.
+    SELECT SINGLE * FROM eban WHERE banfn = i_detalle-banfn AND bnfpo = i_detalle-bnfpo.
+    IF sy-subrc = 0.
+      SELECT SINGLE * FROM zpuautp WHERE zzproyecto = eban-zzproyecto.
+      IF sy-subrc = 0.
+        IF zpuautp-kunnr = '17' AND i_detalle-impuesto = 'X' AND sw = 0.
+          MESSAGE i703(ra) WITH TEXT-004.
+          sw = 1.
+          CONTINUE.
+        ENDIF.
+
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.                    " AVISOBW
+*&---------------------------------------------------------------------*
+*&      Form  ENVIAPRE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM enviapre .
+  RANGES:  matnr FOR ekpo-matnr.
+  RANGES:  ebeln FOR ekpo-ebeln.
+  RANGES:  werks FOR ekpo-werks.
+  DATA:  werkse LIKE ekpo-werks.
+  RANGES:  lifnr FOR ekko-lifnr.
+*{   DELETE         UP2K900237                                        2
+*\  data: sistema like zt001s-logsys.
+*}   DELETE
+*{   INSERT         UP2K900237                                        3
+  DATA : logsys LIKE zt001s-logsys.
+  DATA: sistema LIKE zt001s-rfcdest.
+  DATA: env_pre LIKE zt001s-env_pre.
+  DATA: sap_ext LIKE lfa1-lifnr.
+
+  DATA: matnr_ss2 LIKE mara-matnr.
+  DATA : return2 TYPE STANDARD TABLE OF bapireturn WITH HEADER LINE.
+  DATA: return  LIKE  bapiret1.
+
+*ACTUALIZAMOS PRECIO REGINSTRO INFO.
+  LOOP AT i_linea WHERE xselp = 'X'.
+*{   REPLACE        UP2K900237                                        1
+*\    select single werksex rfcdest into (werkse, sistema)  from zt001s where werks = i_linea-werks.
+    SELECT SINGLE werksex logsys rfcdest env_pre INTO (werkse,logsys, sistema, env_pre)  FROM zt001s WHERE werks = i_linea-werks.
+*}   REPLACE
+    CONTINUE.
+  ENDLOOP.
+  IF sistema IS NOT INITIAL AND env_pre = 'X'.
+
+
+    LOOP AT i_linea WHERE xselp = 'X'.
+
+
+      matnr-low = i_linea-matnr.
+      matnr-sign ='I'.
+      matnr-option = 'EQ'.
+      APPEND matnr.
+
+      ebeln-low = i_linea-ebeln.
+      ebeln-sign ='I'.
+      ebeln-option = 'EQ'.
+      APPEND ebeln.
+
+      lifnr-low = i_linea-lifnr.
+      lifnr-sign ='I'.
+      lifnr-option = 'EQ'.
+      APPEND lifnr.
+
+    ENDLOOP.
+    DELETE ADJACENT DUPLICATES FROM matnr.
+    DELETE ADJACENT DUPLICATES FROM ebeln.
+    DELETE ADJACENT DUPLICATES FROM lifnr.
+
+*verificamos proveedor
+*   loop at lifnr.
+*     case sistema(3).
+*       when 'SS2'.
+*         sap_ext = lifnr-low.
+*         select single sap_ss2 into sap_ext from lfa1 where lifnr = lifnr-low and sap_ss2 <> ' '.
+*       when 'INP'.
+*         sap_ext = lifnr-low.
+*         select single sap_inp into sap_ext from lfa1 where lifnr = lifnr-low and sap_inp <> ' '.
+*     endcase.
+*     call function 'BAPI_VENDOR_EXISTENCECHECK' destination sistema
+*       exporting
+*         vendorno = sap_ext
+*       importing
+*         return   = return.
+*     if return-type = 'E'.
+*       message e002(di_pcs) with lifnr-low.
+*   Proveedor & no existe en el maestro de proveedores
+*     endif.
+*  endloop.
+*verificamos el material
+*  loop at matnr.
+*     call function 'BAPI_MATERIAL_GETALL' destination sistema
+*       exporting
+*         material = matnr-low
+*         plant    = werkse
+*       tables
+*         return   = return2.
+
+*     if  return-type = 'E'.
+*verificamos por si tiene ref local
+*       select single bismt into matnr_ss2 from mara where matnr = matnr.
+*       call function 'BAPI_MATERIAL_GETALL' destination sistema
+*         exporting
+*           material = matnr_ss2
+*           plant    = werkse
+*         tables
+*           return   = return2.
+*       if  return-type = 'E'.
+*         message e004(61) with matnr-low i_linea-werks.
+*     Material & no existe en el centro &
+*       endif.
+*     endif.
+*  endloop.
+
+*DE MOMENTO NO ENVIAMOS LOS REGISTROS INFO
+    IF sy-subrc = 99.
+      SUBMIT zbame12subcon WITH ebeln IN ebeln
+                           WITH matnr IN matnr
+                           WITH f_desde = p_fecha
+                            WITH dismode = 'N' AND RETURN.
+      PERFORM indicador_de_progreso USING 50 TEXT-500.
+*enviamos registro info
+
+      SUBMIT zale_reginfo  WITH p_werks IN werks
+                           WITH p_lifnr IN lifnr
+                           WITH p_matnr IN matnr
+*{   REPLACE        UP2K900237                                        5
+*\                         with logsys = sistema
+                           WITH logsys = logsys
+*}   REPLACE
+                           WITH p_fecha = p_fecha
+                           AND RETURN.
+    ENDIF.
+*ENVIO DE CONDICIONES DE PEDIDO
+    LOOP AT matnr.
+      SUBMIT zrbdsecon  WITH r_konnr IN ebeln
+                       WITH r_matnr =  matnr-low
+*{   REPLACE        UP2K900237                                        4
+*\                       with logsys = sistema
+                       WITH logsys = logsys
+*}   REPLACE
+                       WITH p_cont = ' '
+                       WITH  p_cond = 'X'
+                        AND RETURN.
+    ENDLOOP.
+    MESSAGE i999(re) WITH  TEXT-501.
+
+  ELSE.
+*   message e516(sbcoms) with i_linea-werks.
+  ENDIF.
+ENDFORM.                    " ENVIAPRE
