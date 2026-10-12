@@ -1,0 +1,684 @@
+
+*& KO01 - Excel Upload + Direct BDC + Success/Error ALV
+REPORT zbdc_ko01
+       NO STANDARD PAGE HEADING
+       LINE-SIZE 255.
+
+TYPES: BEGIN OF ty_excel,
+         kokrs TYPE coas-kokrs,
+         auart TYPE coas-auart,
+         aufnr TYPE coas-aufnr,
+         ktext TYPE coas-ktext,
+         bukrs TYPE coas-bukrs,
+         scope TYPE coas-scope,
+         waers TYPE coas-waers,
+         plint TYPE coas-plint,
+         konty TYPE char3,          " Settlement category (optional)
+         empge TYPE char24,         " Settlement receiver (optional)
+       END OF ty_excel.
+
+TYPES: BEGIN OF ty_result,
+         row_no  TYPE i,
+         kokrs   TYPE coas-kokrs,
+         auart   TYPE coas-auart,
+         aufnr   TYPE coas-aufnr,
+         ktext   TYPE coas-ktext,
+         bukrs   TYPE coas-bukrs,
+         scope   TYPE coas-scope,
+         waers   TYPE coas-waers,
+         plint   TYPE coas-plint,
+         konty   TYPE char3,
+         empge   TYPE char24,
+         status  TYPE char10,
+         message TYPE char255,
+       END OF ty_result.
+
+TYPES: BEGIN OF ty_tmpl,
+         kokrs TYPE c LENGTH 20,
+         auart TYPE c LENGTH 20,
+         aufnr TYPE c LENGTH 20,
+         ktext TYPE c LENGTH 40,
+         bukrs TYPE c LENGTH 20,
+         scope TYPE c LENGTH 20,
+         waers TYPE c LENGTH 20,
+         plint TYPE c LENGTH 20,
+         konty TYPE c LENGTH 20,
+         empge TYPE c LENGTH 30,
+       END OF ty_tmpl.
+
+DATA:
+  gt_excel  TYPE STANDARD TABLE OF ty_excel,
+  gs_excel  TYPE ty_excel.
+
+DATA:
+  gt_result TYPE STANDARD TABLE OF ty_result,
+  gs_result TYPE ty_result.
+
+DATA:
+  gt_tmpl   TYPE STANDARD TABLE OF ty_tmpl.
+
+DATA:
+  gt_bdcdata TYPE STANDARD TABLE OF bdcdata,
+  gs_bdcdata TYPE bdcdata.
+
+DATA:
+  gt_msg TYPE STANDARD TABLE OF bdcmsgcoll,
+  gs_msg TYPE bdcmsgcoll.
+
+DATA:
+  gv_filename TYPE string,
+  gv_xstring  TYPE xstring.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+
+PARAMETERS:
+  p_file   TYPE rlgrap-filename,
+  bdc_mode LIKE ctu_params-dismode DEFAULT 'N'.
+SELECTION-SCREEN PUSHBUTTON /1(20) btn_temp USER-COMMAND temp.
+SELECTION-SCREEN END OF BLOCK b1.
+
+
+INITIALIZATION.
+  btn_temp = 'Download Template'.
+
+AT SELECTION-SCREEN.
+
+  CASE sy-ucomm.
+    WHEN 'TEMP'.
+      PERFORM download_template.
+  ENDCASE.
+
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+
+  PERFORM get_file.
+
+
+START-OF-SELECTION.
+
+  PERFORM upload_excel.
+
+  IF gt_excel IS INITIAL.
+    MESSAGE 'No valid records found in Excel file' TYPE 'E'.
+  ENDIF.
+
+  PERFORM process_bdc.
+
+  PERFORM display_alv.
+
+*---------------------------------------------------------------------*
+* FORM GET_FILE
+*---------------------------------------------------------------------*
+FORM get_file.
+
+  DATA:
+    lt_file_table TYPE filetable,
+    ls_file_table TYPE file_table,
+    lv_rc         TYPE i,
+    lv_action     TYPE i.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+    EXPORTING
+      window_title            = 'Select KO01 Excel File'
+      default_extension       = 'xlsx'
+      file_filter             = 'Excel Files (*.xlsx)|*.xlsx|'
+    CHANGING
+      file_table              = lt_file_table
+      rc                      = lv_rc
+      user_action             = lv_action
+    EXCEPTIONS
+      file_open_dialog_failed = 1
+      cntl_error              = 2
+      error_no_gui            = 3
+      not_supported_by_gui    = 4
+      OTHERS                  = 5.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Unable to open file selection dialog' TYPE 'E'.
+  ENDIF.
+
+  IF lv_action = cl_gui_frontend_services=>action_ok.
+    READ TABLE lt_file_table INTO ls_file_table INDEX 1.
+    IF sy-subrc = 0.
+      p_file = ls_file_table-filename.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM UPLOAD_EXCEL
+*---------------------------------------------------------------------*
+FORM upload_excel.
+
+  DATA:
+    lt_bin TYPE solix_tab,
+    lv_len TYPE i.
+
+  DATA:
+    lo_excel      TYPE REF TO cl_fdt_xl_spreadsheet,
+    lo_data       TYPE REF TO data,
+    lt_worksheets TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
+    lv_worksheet  TYPE string.
+
+  FIELD-SYMBOLS:
+    <lt_data> TYPE STANDARD TABLE,
+    <ls_data> TYPE any,
+    <lv_data> TYPE any.
+
+  gv_filename = p_file.
+
+*--- Upload XLSX as binary
+  CALL METHOD cl_gui_frontend_services=>gui_upload
+    EXPORTING
+      filename                = gv_filename
+      filetype                = 'BIN'
+    IMPORTING
+      filelength              = lv_len
+    CHANGING
+      data_tab                = lt_bin
+    EXCEPTIONS
+      file_open_error         = 1
+      file_read_error         = 2
+      no_batch                = 3
+      gui_refuse_filetransfer = 4
+      invalid_type            = 5
+      no_authority            = 6
+      unknown_error           = 7
+      bad_data_format         = 8
+      header_not_allowed      = 9
+      separator_not_allowed   = 10
+      header_too_long         = 11
+      unknown_dp_error        = 12
+      access_denied           = 13
+      dp_out_of_memory        = 14
+      disk_full               = 15
+      dp_timeout              = 16
+      OTHERS                  = 17.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error while uploading Excel file' TYPE 'E'.
+  ENDIF.
+
+*--- Convert binary data to XSTRING
+  gv_xstring = cl_bcs_convert=>solix_to_xstring( it_solix = lt_bin ).
+
+*--- Create Excel object
+  TRY.
+      CREATE OBJECT lo_excel
+        EXPORTING
+          document_name = gv_filename
+          xdocument     = gv_xstring.
+    CATCH cx_fdt_excel_core INTO DATA(lx_excel).
+      MESSAGE lx_excel->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+*--- Worksheet names
+  CLEAR lt_worksheets.
+
+  CALL METHOD lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names
+    IMPORTING
+      worksheet_names = lt_worksheets.
+
+  IF lt_worksheets IS INITIAL.
+    MESSAGE 'No worksheet found in Excel file' TYPE 'E'.
+  ENDIF.
+
+  READ TABLE lt_worksheets INTO lv_worksheet INDEX 1.
+  IF sy-subrc <> 0.
+    MESSAGE 'Unable to read worksheet' TYPE 'E'.
+  ENDIF.
+
+*--- Worksheet data
+  TRY.
+      CALL METHOD lo_excel->if_fdt_doc_spreadsheet~get_itab_from_worksheet
+        EXPORTING
+          worksheet_name = lv_worksheet
+        RECEIVING
+          itab           = lo_data.
+    CATCH cx_fdt_excel_core INTO lx_excel.
+      MESSAGE lx_excel->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+  ASSIGN lo_data->* TO <lt_data>.
+  IF sy-subrc <> 0.
+    MESSAGE 'Unable to assign Excel data' TYPE 'E'.
+  ENDIF.
+
+  LOOP AT <lt_data> ASSIGNING <ls_data>.
+
+*--- Skip header row
+    IF sy-tabix = 1.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR gs_excel.
+
+    ASSIGN COMPONENT 1 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-kokrs = <lv_data>.
+    ENDIF.
+
+    ASSIGN COMPONENT 2 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-auart = <lv_data>.
+    ENDIF.
+
+    ASSIGN COMPONENT 3 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-aufnr = <lv_data>.
+    ENDIF.
+
+    ASSIGN COMPONENT 4 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-ktext = <lv_data>.
+    ENDIF.
+
+    ASSIGN COMPONENT 5 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-bukrs = <lv_data>.
+    ENDIF.
+
+    ASSIGN COMPONENT 6 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-scope = <lv_data>.
+    ENDIF.
+
+    ASSIGN COMPONENT 7 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-waers = <lv_data>.
+    ENDIF.
+
+    ASSIGN COMPONENT 8 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-plint = <lv_data>.
+    ENDIF.
+
+*--- Optional: Settlement category (col 9)
+    ASSIGN COMPONENT 9 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-konty = <lv_data>.
+    ENDIF.
+
+*--- Optional: Settlement receiver (col 10)
+    ASSIGN COMPONENT 10 OF STRUCTURE <ls_data> TO <lv_data>.
+    IF sy-subrc = 0.
+      gs_excel-empge = <lv_data>.
+    ENDIF.
+
+    CONDENSE gs_excel-kokrs.
+    CONDENSE gs_excel-auart.
+    CONDENSE gs_excel-aufnr.
+    CONDENSE gs_excel-ktext.
+    CONDENSE gs_excel-bukrs.
+    CONDENSE gs_excel-scope.
+    CONDENSE gs_excel-waers.
+    CONDENSE gs_excel-plint.
+    CONDENSE gs_excel-konty.
+    CONDENSE gs_excel-empge.
+
+    TRANSLATE gs_excel-konty TO UPPER CASE.
+
+*--- Column H defaults to 'X' (as per recording)
+    IF gs_excel-plint IS INITIAL.
+      gs_excel-plint = 'X'.
+    ENDIF.
+
+*--- Settlement category defaults to BPR only when a receiver is given
+    IF gs_excel-empge IS NOT INITIAL AND gs_excel-konty IS INITIAL.
+      gs_excel-konty = 'BPR'.
+    ENDIF.
+
+    IF gs_excel-kokrs IS INITIAL
+       AND gs_excel-auart IS INITIAL
+       AND gs_excel-aufnr IS INITIAL
+       AND gs_excel-ktext IS INITIAL
+       AND gs_excel-bukrs IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    APPEND gs_excel TO gt_excel.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM PROCESS_BDC
+*---------------------------------------------------------------------*
+FORM process_bdc.
+
+  DATA:
+    lv_row TYPE i.
+
+  LOOP AT gt_excel INTO gs_excel.
+
+    lv_row = sy-tabix.
+
+    CLEAR:
+      gt_bdcdata,
+      gt_msg,
+      gs_result.
+
+    gs_result-row_no = lv_row.
+    gs_result-kokrs  = gs_excel-kokrs.
+    gs_result-auart  = gs_excel-auart.
+    gs_result-aufnr  = gs_excel-aufnr.
+    gs_result-ktext  = gs_excel-ktext.
+    gs_result-bukrs  = gs_excel-bukrs.
+    gs_result-scope  = gs_excel-scope.
+    gs_result-waers  = gs_excel-waers.
+    gs_result-plint  = gs_excel-plint.
+    gs_result-konty  = gs_excel-konty.
+    gs_result-empge  = gs_excel-empge.
+
+*---------------------------------------------------------------------*
+* Screen SAPMKAUF 0100 - Controlling Area / Order Type
+*---------------------------------------------------------------------*
+    PERFORM bdc_dynpro USING 'SAPMKAUF' '0100'.
+    PERFORM bdc_field  USING 'BDC_CURSOR' 'COAS-AUART'.
+    PERFORM bdc_field  USING 'BDC_OKCODE' '/00'.
+    PERFORM bdc_field  USING 'COAS-KOKRS' gs_excel-kokrs.
+    PERFORM bdc_field  USING 'COAS-AUART' gs_excel-auart.
+
+*---------------------------------------------------------------------*
+* Screen SAPMKAUF 0600 - Master Data (Order / Description / Co.Code)
+*---------------------------------------------------------------------*
+    PERFORM bdc_dynpro USING 'SAPMKAUF' '0600'.
+    PERFORM bdc_field  USING 'BDC_OKCODE' '=BUT2'.
+    PERFORM bdc_field  USING 'COAS-AUFNR' gs_excel-aufnr.
+    PERFORM bdc_field  USING 'COAS-KTEXT' gs_excel-ktext.
+    PERFORM bdc_field  USING 'BDC_CURSOR' 'COAS-BUKRS'.
+    PERFORM bdc_field  USING 'COAS-BUKRS' gs_excel-bukrs.
+    PERFORM bdc_field  USING 'COAS-SCOPE' gs_excel-scope.
+
+*---------------------------------------------------------------------*
+* Screen SAPMKAUF 0600 - Control Data (Currency / Column H flag)
+*---------------------------------------------------------------------*
+    PERFORM bdc_dynpro USING 'SAPMKAUF' '0600'.
+
+    IF gs_excel-empge IS NOT INITIAL.
+*     Settlement receiver given -> go to settlement rule
+      PERFORM bdc_field USING 'BDC_OKCODE' '=ABVO'.
+    ELSE.
+*     No settlement rule -> save directly
+      PERFORM bdc_field USING 'BDC_OKCODE' '=BU'.
+    ENDIF.
+
+    PERFORM bdc_field USING 'COAS-AUFNR' gs_excel-aufnr.
+    PERFORM bdc_field USING 'COAS-KTEXT' gs_excel-ktext.
+    PERFORM bdc_field USING 'BDC_CURSOR' 'COAS-WAERS'.
+    PERFORM bdc_field USING 'COAS-WAERS' gs_excel-waers.
+    PERFORM bdc_field USING 'COAS-PLINT' gs_excel-plint.
+
+*---------------------------------------------------------------------*
+* Settlement rule screens - ONLY when receiver is provided in Excel
+*---------------------------------------------------------------------*
+    IF gs_excel-empge IS NOT INITIAL.
+
+*     Screen SAPLKOBS 0130 - Category / Receiver
+      PERFORM bdc_dynpro USING 'SAPLKOBS' '0130'.
+      PERFORM bdc_field  USING 'BDC_CURSOR' 'DKOBR-EMPGE(01)'.
+      PERFORM bdc_field  USING 'BDC_OKCODE' '/00'.
+      PERFORM bdc_field  USING 'COBRB-KONTY(01)' gs_excel-konty.
+      PERFORM bdc_field  USING 'DKOBR-EMPGE(01)' gs_excel-empge.
+
+*     Screen SAPLKOBS 0130 - Save
+      PERFORM bdc_dynpro USING 'SAPLKOBS' '0130'.
+      PERFORM bdc_field  USING 'BDC_CURSOR' 'COBRB-KONTY(01)'.
+      PERFORM bdc_field  USING 'BDC_OKCODE' '=SICH'.
+
+    ENDIF.
+
+    SET PARAMETER ID 'CAC' FIELD gs_excel-kokrs.
+
+    CALL TRANSACTION 'KO01'
+      USING gt_bdcdata
+      MODE bdc_mode
+      UPDATE 'S'
+      MESSAGES INTO gt_msg.
+
+    PERFORM get_bdc_message CHANGING gs_result.
+
+    APPEND gs_result TO gt_result.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* BDC helper forms
+*---------------------------------------------------------------------*
+FORM bdc_dynpro USING
+      p_program TYPE bdcdata-program
+      p_dynpro  TYPE bdcdata-dynpro.
+
+  CLEAR gs_bdcdata.
+  gs_bdcdata-program  = p_program.
+  gs_bdcdata-dynpro   = p_dynpro.
+  gs_bdcdata-dynbegin = 'X'.
+  APPEND gs_bdcdata TO gt_bdcdata.
+
+ENDFORM.
+
+FORM bdc_field USING
+      p_fnam TYPE bdcdata-fnam
+      p_fval TYPE any.
+
+  CLEAR gs_bdcdata.
+  gs_bdcdata-fnam = p_fnam.
+  gs_bdcdata-fval = p_fval.
+  APPEND gs_bdcdata TO gt_bdcdata.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM GET_BDC_MESSAGE
+*---------------------------------------------------------------------*
+FORM get_bdc_message CHANGING
+      cs_result TYPE ty_result.
+
+  DATA:
+    lv_message TYPE char255,
+    lv_error   TYPE abap_bool.
+
+  CLEAR:
+    cs_result-status,
+    cs_result-message,
+    lv_error.
+
+  LOOP AT gt_msg INTO gs_msg.
+
+    CLEAR lv_message.
+
+    CALL FUNCTION 'MESSAGE_TEXT_BUILD'
+      EXPORTING
+        msgid               = gs_msg-msgid
+        msgnr               = gs_msg-msgnr
+        msgv1               = gs_msg-msgv1
+        msgv2               = gs_msg-msgv2
+        msgv3               = gs_msg-msgv3
+        msgv4               = gs_msg-msgv4
+      IMPORTING
+        message_text_output = lv_message.
+
+    IF cs_result-message IS INITIAL.
+      cs_result-message = lv_message.
+    ELSE.
+      CONCATENATE cs_result-message lv_message
+        INTO cs_result-message SEPARATED BY ' | '.
+    ENDIF.
+
+    IF gs_msg-msgtyp = 'E'
+       OR gs_msg-msgtyp = 'A'
+       OR gs_msg-msgtyp = 'X'.
+      lv_error = abap_true.
+    ENDIF.
+
+    IF lv_message CS 'No batch input data found'.
+      lv_error = abap_true.
+    ENDIF.
+
+  ENDLOOP.
+
+  IF lv_error = abap_true.
+    cs_result-status = 'ERROR'.
+  ELSE.
+    cs_result-status = 'SUCCESS'.
+    IF cs_result-message IS INITIAL.
+      cs_result-message = 'KO01 created successfully'.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM DISPLAY_ALV
+*---------------------------------------------------------------------*
+FORM display_alv.
+
+  DATA:
+    lo_alv     TYPE REF TO cl_salv_table,
+    lo_columns TYPE REF TO cl_salv_columns_table.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = gt_result ).
+
+      lo_alv->get_functions( )->set_all( abap_true ).
+
+      lo_columns = lo_alv->get_columns( ).
+      lo_columns->set_optimize( abap_true ).
+
+      PERFORM set_col USING lo_columns 'ROW_NO'  'Row'      'Excel Row'        'Excel Row Number'.
+      PERFORM set_col USING lo_columns 'KOKRS'   'CO Area'  'Controlling Area' 'Controlling Area'.
+      PERFORM set_col USING lo_columns 'AUART'   'Ord.Type' 'Order Type'       'Order Type'.
+      PERFORM set_col USING lo_columns 'AUFNR'   'Order'    'Order Number'     'Order Number'.
+      PERFORM set_col USING lo_columns 'KTEXT'   'Desc.'    'Description'      'Order Description'.
+      PERFORM set_col USING lo_columns 'BUKRS'   'Co.Code'  'Company Code'     'Company Code'.
+      PERFORM set_col USING lo_columns 'SCOPE'   'Obj.Cl.'  'Object Class'     'Object Class'.
+      PERFORM set_col USING lo_columns 'WAERS'   'Curr.'    'Currency'         'Currency'.
+      PERFORM set_col USING lo_columns 'PLINT'   'Statistic' 'Statistical'     'Statistical'.
+      PERFORM set_col USING lo_columns 'KONTY'   'Set.Cat.' 'Settle Category'  'Settlement Category'.
+      PERFORM set_col USING lo_columns 'EMPGE'   'Receiver' 'Settle Receiver'  'Settlement Receiver'.
+      PERFORM set_col USING lo_columns 'STATUS'  'Status'   'BDC Status'       'BDC Processing Status'.
+      PERFORM set_col USING lo_columns 'MESSAGE' 'Message'  'BDC Message'      'BDC Processing Message'.
+
+      lo_alv->display( ).
+
+    CATCH cx_salv_msg INTO DATA(lx_salv).
+      MESSAGE lx_salv->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM SET_COL - set ALV / template column texts
+*---------------------------------------------------------------------*
+FORM set_col USING
+      io_columns TYPE REF TO cl_salv_columns_table
+      iv_name    TYPE lvc_fname
+      iv_short   TYPE scrtext_s
+      iv_medium  TYPE scrtext_m
+      iv_long    TYPE scrtext_l.
+
+  DATA lo_column TYPE REF TO cl_salv_column.
+
+  TRY.
+      lo_column = io_columns->get_column( iv_name ).
+      lo_column->set_short_text( iv_short ).
+      lo_column->set_medium_text( iv_medium ).
+      lo_column->set_long_text( iv_long ).
+    CATCH cx_salv_not_found.
+  ENDTRY.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM DOWNLOAD_TEMPLATE - builds the 10-column Excel template
+*---------------------------------------------------------------------*
+FORM download_template.
+
+  DATA:
+    lv_filename TYPE string,
+    lv_path     TYPE string,
+    lv_fullpath TYPE string,
+    lv_action   TYPE i,
+    lo_alv      TYPE REF TO cl_salv_table,
+    lo_columns  TYPE REF TO cl_salv_columns_table,
+    lv_xml      TYPE xstring,
+    lt_bin      TYPE solix_tab,
+    lv_len      TYPE i.
+
+*--- Ask where to save
+  cl_gui_frontend_services=>file_save_dialog(
+    EXPORTING
+      window_title      = 'Save KO01 Template'
+      default_extension = 'xlsx'
+      default_file_name = 'KO01_Template.xlsx'
+      file_filter       = 'Excel Files (*.xlsx)|*.xlsx|'
+    CHANGING
+      filename          = lv_filename
+      path              = lv_path
+      fullpath          = lv_fullpath
+      user_action       = lv_action
+    EXCEPTIONS
+      OTHERS            = 1 ).
+
+  IF sy-subrc <> 0 OR lv_action <> cl_gui_frontend_services=>action_ok.
+    RETURN.
+  ENDIF.
+
+*--- Build an empty table with header texts only
+  CLEAR gt_tmpl.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING r_salv_table = lo_alv
+        CHANGING  t_table      = gt_tmpl ).
+
+      lo_columns = lo_alv->get_columns( ).
+      lo_columns->set_optimize( abap_true ).
+
+      PERFORM set_col USING lo_columns 'KOKRS' 'CO Area'  'Controlling Area'    'Controlling Area'.
+      PERFORM set_col USING lo_columns 'AUART' 'Ord.Type' 'Order Type'          'Order Type'.
+      PERFORM set_col USING lo_columns 'AUFNR' 'Order'    'Order'               'Order'.
+      PERFORM set_col USING lo_columns 'KTEXT' 'Desc.'    'Description'         'Description'.
+      PERFORM set_col USING lo_columns 'BUKRS' 'Co.Code'  'Company Code'        'Company Code'.
+      PERFORM set_col USING lo_columns 'SCOPE' 'Obj.Cl.'  'Object Class'        'Object Class'.
+      PERFORM set_col USING lo_columns 'WAERS' 'Curr.'    'Currency'            'Currency'.
+      PERFORM set_col USING lo_columns 'PLINT' 'Statistic' 'Statistical'        'Statistical'.
+      PERFORM set_col USING lo_columns 'KONTY' 'Set.Cat.' 'Settlement Category' 'Settlement Category'.
+      PERFORM set_col USING lo_columns 'EMPGE' 'Receiver' 'Settlement Receiver' 'Settlement Receiver'.
+
+      lv_xml = lo_alv->to_xml( if_salv_bs_xml=>c_type_xlsx ).
+
+    CATCH cx_salv_msg INTO DATA(lx_salv).
+      MESSAGE lx_salv->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+*--- Save to PC
+  lv_len = xstrlen( lv_xml ).
+  lt_bin = cl_bcs_convert=>xstring_to_solix( iv_xstring = lv_xml ).
+
+  cl_gui_frontend_services=>gui_download(
+    EXPORTING
+      bin_filesize = lv_len
+      filename     = lv_fullpath
+      filetype     = 'BIN'
+    CHANGING
+      data_tab     = lt_bin
+    EXCEPTIONS
+      OTHERS       = 1 ).
+
+  IF sy-subrc = 0.
+    MESSAGE |Template downloaded: { lv_fullpath }| TYPE 'S'.
+  ELSE.
+    MESSAGE 'Error while downloading template' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
