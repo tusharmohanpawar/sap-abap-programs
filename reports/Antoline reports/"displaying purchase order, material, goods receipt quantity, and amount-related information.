@@ -1,0 +1,2216 @@
+*&---------------------------------------------------------------------*
+*&    (C)   P R I M U S  TECHSYSTEMS PVT. LTD.
+*&*--------------------------------------------------------------------*
+*& CLIENT           : SHRIRAM PISTON
+*& REPORT           : ZBAMI10_F
+*& DESCRIPTION      : Purchasing Prices Sheet
+*& DEVLOPER NAME    : Tushar Pawar.
+*& FUNCTIONAL NAME  : Kalpesh Sawant
+*& DATE             : 18/06/2026
+*& TCODE            : ZMF01
+*&*--------------------------------------------------------------------*
+"providing material, inventory, and storage location details with Excel-based reporting functionality.Implemented.
+* Program that generates an inventory document and posts it
+* Based on data from a file.
+* Add an additional field: stock type.
+* ' '  add as type 1 in SAP
+* '2'  add as type 2 in SAP
+* '4'  add as type 4 in SAP
+
+REPORT zbami10_f .
+TABLES: mard,
+        mchb,
+        mcha,
+        bhdgd,
+        mslb,
+        msku,
+        mara,
+        marc,
+        usr01,
+        iseg,
+        t001w,
+        t001l,
+        t006,
+        marm,
+        mkol.
+TABLES sscrfields.
+
+TYPE-POOLS:
+  slis.
+***********************************************************************
+*                       Variables for ALV.
+***********************************************************************
+DATA:
+  i_grid_settings TYPE lvc_s_glay,
+  is_layout       TYPE slis_layout_alv,
+  it_sort         TYPE slis_t_sortinfo_alv,
+  ls_sort         TYPE slis_sortinfo_alv,
+  it_fieldcat     TYPE slis_t_fieldcat_alv,
+  is_variant      TYPE disvariant,
+  is_fieldcat     TYPE slis_fieldcat_alv,
+  it_events       TYPE slis_t_event,
+  i_grid_title    TYPE lvc_title,
+  is_exit         TYPE slis_exit_by_user,
+  it_listheader   TYPE slis_t_listheader,
+  ls_color        TYPE slis_specialcol_alv,
+  ls_extab        TYPE slis_extab,
+  ls_fieldcat     TYPE slis_fieldcat_alv,
+  ls_listheader   TYPE slis_listheader,
+  pf_status_set   TYPE slis_formname,
+  top_of_page     TYPE slis_formname,
+  user_command    TYPE slis_formname.
+
+DATA: i_fieldcat TYPE lvc_t_fcat.
+
+DATA: d_error TYPE c VALUE ''.
+
+
+
+
+* Table for the batch input
+DATA: BEGIN OF bdcdata OCCURS 0.
+        INCLUDE STRUCTURE bdcdata.
+      DATA: END OF bdcdata.
+
+* Table to store the file data
+*DATA: BEGIN OF datos OCCURS 10,
+*        werks(5)     TYPE c,   "Centro
+*        lgort(5)     TYPE c,   "Almacén
+*        posicion     TYPE i,   "Posición
+*        icon(4)      TYPE c,   "Icono
+*        matnr        LIKE mara-matnr,   "Material
+**        charg(10)  TYPE c,   "Lote
+**        stock(15)    TYPE c,   "Stock
+*        stock        TYPE iseg-erfmg,
+*        t_stock(1)   TYPE c,   "Tipo de stock
+*        erfme(3)     TYPE c,   "Unidad de medida
+*        msehi        LIKE t006-msehi,   "Unidad de medida
+*        grund        LIKE iseg-grund, "Motivo
+*        color        TYPE slis_t_specialcol_alv,
+*        msgtext(100) TYPE c,
+*        error        TYPE c,
+*        charg(10)    TYPE c,   "Lote
+*      END OF datos.
+DATA: BEGIN OF datos OCCURS 10,
+        werks        TYPE t001w-werks,
+        lgort        TYPE mard-lgort,
+        posicion     TYPE i,
+        icon         TYPE icon_d,
+        matnr        TYPE mara-matnr,
+        stock        TYPE iseg-erfmg,
+        t_stock      TYPE iseg-bstar,
+        erfme        TYPE iseg-erfme,
+        msehi        TYPE t006-msehi,
+        grund        TYPE iseg-grund,
+        color        TYPE slis_t_specialcol_alv,
+        msgtext(100) TYPE c,
+        error        TYPE c,
+        charg        TYPE iseg-charg,
+      END OF datos.
+
+* Table of errors
+*DATA: BEGIN OF error_datos OCCURS 0,
+*        matnr     LIKE mara-matnr,   "Material
+*        lgort(5)  TYPE c,          "Almacén
+*        werks(5)  TYPE c,          "Centro
+**        charg(10) TYPE c,         "Lote
+*        stock(15) TYPE c,         "Stock
+*        tipo(1)   TYPE c,         "Tipo de inv.
+*        err(1)    TYPE c,         "Tipo de mensaje
+*        texto(90) TYPE c,         "Texto del mensaje.
+*        charg(10) TYPE c,         "Lote
+*      END OF error_datos.
+DATA: BEGIN OF error_datos OCCURS 0,
+        matnr     TYPE mara-matnr,
+        lgort     TYPE mard-lgort,
+        werks     TYPE t001w-werks,
+        stock     TYPE iseg-erfmg,
+        tipo      TYPE iseg-bstar,
+        err       TYPE c,
+        texto(90) TYPE c,
+        charg     TYPE iseg-charg,
+      END OF error_datos.
+* Message tables.
+DATA:   messtab LIKE bdcmsgcoll OCCURS 0 WITH HEADER LINE.
+DATA:  BEGIN OF r_message.
+         INCLUDE STRUCTURE message.
+       DATA:  END   OF r_message.
+
+* Call Transaction execution type
+DATA: mode(1) TYPE c VALUE 'N'.
+
+* Variables
+DATA: aux TYPE d.
+DATA: contador TYPE i.
+
+DATA: tipofich_excel.
+
+DATA: BEGIN OF i_excel OCCURS 100,
+        fila    LIKE alsmex_tabline-row,
+        columna LIKE alsmex_tabline-col,
+        valor   LIKE alsmex_tabline-value,
+      END OF i_excel.
+
+
+
+CONSTANTS: c_begin_col TYPE i VALUE '1',
+           c_begin_row TYPE i VALUE '1',
+           c_end_col   TYPE i VALUE '8',
+           c_end_row   TYPE i VALUE '9999'.
+
+
+DATA: BEGIN OF i_doc_inven OCCURS 0,
+        marca(1),
+        cod(15),
+        p_fechac LIKE sy-datum,
+        werks    LIKE datos-werks,
+      END OF i_doc_inven.
+
+
+*---------------------------------------------------------------------*
+* Start of Modification
+* Developer : Tushar Pawar
+* Date      : 09.07.2026
+* Purpose   : Download Excel Template
+*---------------------------------------------------------------------*
+
+SELECTION-SCREEN FUNCTION KEY 1.
+
+*---------------------------------------------------------------------*
+* End of Modification
+*---------------------------------------------------------------------*
+*-----------------------------------------------------------------------
+*  Selection screen
+*-----------------------------------------------------------------------
+PARAMETERS: fichero LIKE rlgrap-filename .
+*PARAMETERS: FILE LIKE RLGRAP-FILENAME DEFAULT 'C:\SAP\ZMF01A.xls'.
+
+PARAMETERS: p_fechad TYPE d ,
+            p_fechac TYPE d .
+
+SELECTION-SCREEN SKIP 2.
+
+SELECTION-SCREEN BEGIN OF BLOCK blq1 WITH FRAME.
+PARAMETERS: p_tipo  LIKE ikpf-sobkz,
+            p_kunnr LIKE iseg-kunnr,
+            p_lifnr LIKE iseg-lifnr.
+PARAMETERS: p_charg AS CHECKBOX.
+SELECTION-SCREEN END OF BLOCK blq1.
+
+SELECTION-SCREEN BEGIN OF BLOCK blq2 WITH FRAME TITLE TEXT-055.
+
+SELECTION-SCREEN SKIP 1.
+SELECTION-SCREEN COMMENT 1(79) TEXT-057.
+SELECTION-SCREEN SKIP 1.
+SELECTION-SCREEN COMMENT 1(79) TEXT-056.
+SELECTION-SCREEN SKIP 1.
+
+SELECTION-SCREEN END OF BLOCK blq2.
+
+*-----------------------------------------------------------------------
+
+*---------------------------------------------------------------------*
+* Start of Modification
+* Developer : Tushar Pawar
+* Date      : 09.07.2026
+* Purpose   : Download Excel Template
+*---------------------------------------------------------------------*
+
+INITIALIZATION.
+
+  sscrfields-functxt_01 = 'Template'.
+
+*---------------------------------------------------------------------*
+* End of Modification
+*---------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+*-----------------------------------------------------------------------
+
+*---------------------------------------------------------------------*
+* Start of Modification
+* Developer : Tushar Pawar
+* Date      : 09.07.2026
+* Purpose   : Download Excel Template
+*---------------------------------------------------------------------*
+
+IF sscrfields-ucomm = 'FC01'.
+  PERFORM download_template.
+  STOP.
+ENDIF.
+*---------------------------------------------------------------------*
+* End of Modification
+*---------------------------------------------------------------------*
+
+  CASE p_tipo.
+* For customer consignment inventory, the customer is mandatory.
+    WHEN 'W' OR 'V'.
+      IF p_kunnr IS INITIAL.
+        MESSAGE ID 'BCTRAIN' TYPE 'E' NUMBER '860'.
+      ENDIF.
+* For subcontractor inventory, the vendor is mandatory.
+    WHEN 'O' OR 'M'.
+      IF p_lifnr IS INITIAL.
+        MESSAGE ID '06' TYPE 'E' NUMBER '049'.
+      ENDIF.
+*Mod. Javi Arce. Jan13. Internal Correction. Vendor Consignment Inventory
+* For vendor consignment inventory, the vendor is mandatory.
+    WHEN 'K'.
+      IF p_lifnr IS INITIAL.
+        MESSAGE ID '06' TYPE 'E' NUMBER '049'.
+      ENDIF.
+*End Mod. Javi Arce. Jan13.
+  ENDCASE.
+
+
+
+AT SELECTION-SCREEN ON fichero.
+
+*---------------------------------------------------------------*
+* Start of Modification
+* Developer : Tushar Pawar
+* Purpose   : Allow template download without file selection
+*---------------------------------------------------------------*
+  IF fichero IS INITIAL.
+    RETURN.
+  ENDIF.
+*---------------------------------------------------------------*
+* End of Modification
+*---------------------------------------------------------------*
+
+  IF fichero NP '*.xlsx' AND fichero NP '*.csv'.
+    MESSAGE e999(zp) WITH TEXT-e16.
+  ENDIF.
+* Ayuda F4 para la ruta del fichero.
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR fichero.
+  PERFORM f4_p_path.
+
+
+*-----------------------------------------------------------------------
+START-OF-SELECTION.
+*-----------------------------------------------------------------------
+* We access the user data to view the date format.
+  SELECT SINGLE * FROM usr01
+        WHERE bname = sy-uname.
+  IF sy-uname = 'ESGAI0033'.
+    mode = 'E'.
+  ENDIF.
+
+* Ponemos el status
+  SET PF-STATUS 'MI20'.
+  SET USER-COMMAND ' '.
+
+
+** Formato americano
+*  IF usr01-datfm = '2'.
+*    MOVE: p_fechad TO aux.
+*    CLEAR p_fechad.
+*    MOVE: aux(4) TO p_fechad+4(4),
+*          aux+4(2) TO p_fechad(2),
+*          aux+6(2) TO p_fechad+2(2).
+*    CLEAR aux.
+*
+*    MOVE: p_fechac TO aux.
+*    CLEAR p_fechac.
+*    MOVE: aux(4) TO p_fechac+4(4),
+*          aux+4(2) TO p_fechac(2),
+*          aux+6(2) TO p_fechac+2(2).
+*    CLEAR aux.
+*
+** Formato europeo
+*  ELSE.
+*  IF usr01-datfm <> '5'.
+*   MOVE: p_fechad TO aux.
+*   CLEAR p_fechad.
+*   MOVE: aux(4) TO p_fechad+4(4),
+*         aux+4(2) TO p_fechad+2(2),
+*         aux+6(2) TO p_fechad(2).
+*   CLEAR aux.
+*
+*   MOVE: p_fechac TO aux.
+*   CLEAR p_fechac.
+*   MOVE: aux(4) TO p_fechac+4(4),
+*         aux+4(2) TO p_fechac+2(2),
+*         aux+6(2) TO p_fechac(2).
+*   CLEAR aux.
+*  ENDIF.
+*  ENDIF.
+* Leer el fichero
+  CLEAR tipofich_excel.
+  SEARCH fichero FOR '*XLS'.
+  IF sy-subrc = 0.
+    tipofich_excel = 'X'.
+  ENDIF.
+
+  SEARCH fichero FOR '*xls'.
+  IF sy-subrc = 0.
+    tipofich_excel = 'X'.
+  ENDIF.
+
+  SEARCH fichero FOR '*XLSX'.
+  IF sy-subrc = 0.
+    tipofich_excel = 'X'.
+  ENDIF.
+
+  SEARCH fichero FOR '*xlsx'.
+  IF sy-subrc = 0.
+    tipofich_excel = 'X'.
+  ENDIF.
+
+  IF tipofich_excel = 'X'.
+    PERFORM obtener_datos_excel.
+  ELSE.
+    PERFORM obtener_datos_fichero.
+  ENDIF.
+  PERFORM convert_material.
+  IF 1 = 1.
+    PERFORM fill_catalog_alv.
+    PERFORM f_check_material.
+*  IF tipofich_excel = 'X'.
+*    PERFORM obtener_datos_excel.
+*  ELSE.
+*    PERFORM obtener_datos_fichero.
+*  ENDIF.
+*
+*  IF 1 = 1.
+*    PERFORM fill_catalog_alv.
+*    PERFORM f_check_material.
+    IF d_error IS NOT INITIAL.
+      PERFORM print_report_alv.
+    ELSE.
+*    LEAVE TO LIST-PROCESSING.
+      SET PF-STATUS 'MI20'.
+      PERFORM f_create_document.
+      PERFORM f_end_of_selection.
+    ENDIF.
+  ELSE.
+
+
+
+* AVOID DUPLICATES
+    PERFORM duplicados.
+* Check that no material is included in another inventory
+    LOOP AT datos.
+      TRANSLATE datos-werks TO UPPER CASE.
+      TRANSLATE datos-lgort TO UPPER CASE.
+* Check whether the material exists
+      SELECT SINGLE * FROM mara
+          WHERE matnr = datos-matnr.
+
+      IF sy-subrc NE 0.
+        MOVE-CORRESPONDING datos TO error_datos.
+        MOVE: 'E' TO error_datos-err,
+              TEXT-101 TO error_datos-texto.
+        APPEND error_datos.
+        DELETE datos.
+        CONTINUE.
+      ENDIF.
+
+* Check whether the material exists for the plant.
+      SELECT SINGLE * FROM marc
+          WHERE matnr = datos-matnr
+          AND   werks = datos-werks.
+
+      IF sy-subrc NE 0.
+        MOVE-CORRESPONDING datos TO error_datos.
+        MOVE: 'E' TO error_datos-err,
+              TEXT-102 TO error_datos-texto.
+        APPEND error_datos.
+        DELETE datos.
+        CONTINUE.
+      ENDIF.
+
+      CASE p_tipo.
+
+*      WAREHOUSE INVENTORY.
+        WHEN space.
+
+          IF datos-charg IS NOT INITIAL.
+
+            SELECT SINGLE * FROM mchb
+                          WHERE matnr =  datos-werks
+                          AND   lgort = datos-lgort
+                          AND charg = datos-charg.
+
+
+            IF sy-subrc NE 0.
+              IF NOT mchb-sperc IS INITIAL.
+                SELECT SINGLE * FROM iseg WHERE
+                          matnr = datos-matnr
+                    AND   werks = datos-werks
+                    AND   lgort = datos-lgort
+                    AND   charg = datos-charg
+                    AND   bstar = datos-t_stock
+                    AND   xdiff = space.
+                IF sy-subrc = 0.
+                  MOVE-CORRESPONDING datos TO error_datos.
+                  MOVE: 'E' TO error_datos-err,
+                        TEXT-100 TO error_datos-texto.
+                  APPEND error_datos.
+                  DELETE datos.
+                  CONTINUE.
+                ENDIF.
+              ENDIF.
+            ELSE.
+*I would add that if there is no record in MHB, you should check MKOL.
+              SELECT SINGLE * FROM mkol
+                 WHERE matnr =  datos-werks
+                 AND   lgort = datos-lgort
+                 AND charg = datos-charg.
+
+              IF sy-subrc NE 0.
+                IF NOT mkol-spers IS INITIAL.
+                  SELECT SINGLE * FROM iseg WHERE
+                            matnr = datos-matnr
+                      AND   werks = datos-werks
+                      AND   lgort = datos-lgort
+                      AND   charg = datos-charg
+                      AND   bstar = datos-t_stock
+                      AND   xdiff = space.
+                  IF sy-subrc = 0.
+                    MOVE-CORRESPONDING datos TO error_datos.
+                    MOVE: 'E' TO error_datos-err,
+                          TEXT-100 TO error_datos-texto.
+                    APPEND error_datos.
+                    DELETE datos.
+                    CONTINUE.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+
+          ELSE.
+            SELECT SINGLE * FROM mard
+                WHERE matnr = datos-matnr
+                AND   werks = datos-werks
+                AND   lgort = datos-lgort.
+
+*      We store it in an error table.
+            IF NOT mard-sperr IS INITIAL.
+              SELECT SINGLE * FROM iseg WHERE
+                        matnr = datos-matnr
+                  AND   werks = datos-werks
+                  AND   lgort = datos-lgort
+                  AND   bstar = datos-t_stock
+                  AND   xdiff = space.
+              IF sy-subrc = 0.
+                MOVE-CORRESPONDING datos TO error_datos.
+                MOVE: 'E' TO error_datos-err,
+                      TEXT-100 TO error_datos-texto.
+                APPEND error_datos.
+                DELETE datos.
+                CONTINUE.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+*     INVENTARIO STOCK SUBCONTRATISTA O EMB. RETORNABLE EN PROVEEDOR
+        WHEN 'O' OR 'M'.
+          SELECT SINGLE * FROM mslb
+                WHERE matnr = datos-matnr
+                AND   werks = datos-werks
+                AND   lifnr = p_lifnr
+                AND   charg = datos-charg"space
+                AND   sobkz = p_tipo.
+*       Store it in the error table.
+          IF NOT mslb-lbspr IS INITIAL.
+            MOVE-CORRESPONDING datos TO error_datos.
+            MOVE: 'E' TO error_datos-err,
+                  TEXT-100 TO error_datos-texto.
+            APPEND error_datos.
+            DELETE datos.
+            CONTINUE.
+          ENDIF.
+*Mod. Javi Arce. Jan13. Internal Correction. Vendor Consignment Inventory
+*     VENDOR CONSIGNMENT STOCK INVENTORY
+        WHEN 'K'.
+          SELECT SINGLE * FROM mkol
+                WHERE matnr = datos-matnr
+                AND   werks = datos-werks
+                AND   lifnr = p_lifnr
+                AND   charg = datos-charg"space
+                AND   sobkz = p_tipo.
+*       Store it in the error table.
+          IF NOT mkol-spers IS INITIAL.
+            MOVE-CORRESPONDING datos TO error_datos.
+            MOVE: 'E' TO error_datos-err,
+                  TEXT-100 TO error_datos-texto.
+            APPEND error_datos.
+            DELETE datos.
+            CONTINUE.
+          ENDIF.
+*End Mod. Javi Arce. Jan13.
+*     CUSTOMER CONSIGNMENT STOCK INVENTORY / RETURNABLE PACKAGING AT CUSTOMER
+        WHEN 'W' OR 'V'.
+          SELECT SINGLE * FROM msku
+                WHERE matnr = datos-matnr
+                AND   werks = datos-werks
+                AND   kunnr = p_kunnr
+                AND   charg = datos-charg"space
+                AND   sobkz = p_tipo.
+*       Store it in the error table.
+          IF NOT msku-kuspr IS INITIAL.
+            MOVE-CORRESPONDING datos TO error_datos.
+            MOVE: 'E' TO error_datos-err,
+                  TEXT-100 TO error_datos-texto.
+            APPEND error_datos.
+            DELETE datos.
+            CONTINUE.
+          ENDIF.
+
+      ENDCASE.
+    ENDLOOP.
+
+* Populate the BDCDATA table with the inventory data.
+    PERFORM cabecera.
+
+* Include a maximum of 300 materials in each document; for this purpose, use a
+* counter.
+    CLEAR contador.
+    ADD 1 TO contador.
+    LOOP AT datos.
+
+      IF contador GT '300'.
+*      Save the previous document.
+        PERFORM grabar_documento.
+
+        CLEAR bdcdata.
+        REFRESH bdcdata.
+
+*      Generate a new one.
+        PERFORM cabecera.
+
+*      First item
+        PERFORM anadir_posicion.
+
+        CLEAR contador.
+        ADD 1 TO contador.
+      ELSE.
+        PERFORM anadir_posicion.
+        ADD 1 TO contador.
+      ENDIF.
+    ENDLOOP.
+
+* Save the last document.
+    PERFORM grabar_documento.
+  ENDIF.
+
+*-----------------------------------------------------------------------
+END-OF-SELECTION.
+*-----------------------------------------------------------------------
+  IF 1 = 1.
+
+  ELSE.
+    PERFORM f_end_of_selection.
+  ENDIF.
+
+*-----------------------------------------------------------------------
+TOP-OF-PAGE.
+*-----------------------------------------------------------------------
+
+  MOVE: datos-werks  TO bhdgd-bukrs,
+        sy-datum TO bhdgd-datum,
+        sy-pagno TO bhdgd-seqno,
+        140      TO bhdgd-lines,
+        '0'      TO bhdgd-inifl.
+
+
+  PERFORM batch-heading(rsbtchh0).
+  ULINE.
+  SKIP.
+
+*&---------------------------------------------------------------------*
+*&      Form  OBTENER_DATOS_FICHERO
+*&---------------------------------------------------------------------*
+*   We load the file data into an internal table.
+*----------------------------------------------------------------------*
+FORM obtener_datos_fichero.
+  REFRESH datos.
+  CALL FUNCTION 'WS_UPLOAD'
+    EXPORTING
+      filename                = fichero
+      filetype                = 'DAT'
+    TABLES
+      data_tab                = datos
+    EXCEPTIONS
+      conversion_error        = 1
+      file_open_error         = 2
+      file_read_error         = 3
+      invalid_table_width     = 4
+      invalid_type            = 5
+      no_batch                = 6
+      unknown_error           = 7
+      gui_refuse_filetransfer = 8
+      OTHERS                  = 9.
+
+  IF sy-subrc NE 0.
+    MESSAGE ID 'PC' TYPE 'E' NUMBER '028'.
+  ENDIF.
+
+ENDFORM.                    " OBTENER_DATOS_FICHERO
+*&---------------------------------------------------------------------*
+*&      Form  cabecera
+*&---------------------------------------------------------------------*
+* Dynpro incial, cabecera de inv.
+*----------------------------------------------------------------------*
+FORM cabecera.
+  CLEAR bdcdata.
+  REFRESH bdcdata.
+*CSDPASAPD-1514---06/11/2024.
+* We changed the format of the date fields.
+  DATA: f_fechad  TYPE char10.
+  DATA: f_fechac  TYPE char10.
+
+  WRITE p_fechad TO f_fechad.
+
+  WRITE p_fechac TO f_fechac.
+
+  CLEAR i_doc_inven.
+* Home screen.
+  PERFORM bdc_dynpro      USING 'SAPMM07I' '0700'.
+  PERFORM bdc_field       USING 'BDC_CURSOR'
+                                'IKPF-WERKS'.
+  PERFORM bdc_field       USING 'BDC_OKCODE'
+                                '/00'.
+* IF usr01-datfm = '5'.
+  PERFORM bdc_field       USING 'RM07I-ZLDAT'
+                                 f_fechac.
+
+  PERFORM bdc_field       USING 'RM07I-BLDAT'
+                                f_fechad.
+
+  i_doc_inven-p_fechac =  p_fechac.
+
+* ELSE.
+*  PERFORM bdc_field       USING 'RM07I-ZLDAT'
+*                                p_fechac.
+
+* PERFORM bdc_field       USING 'RM07I-BLDAT'
+*                               p_fechad.
+
+* i_doc_inven-p_fechac =  p_fechac.
+
+* ENDIF.
+  PERFORM bdc_field       USING 'IKPF-WERKS'
+                                datos-werks.
+  i_doc_inven-werks =  datos-werks.
+* If we do a special stock inventory, we remove the storage.
+  IF p_tipo IS INITIAL
+    OR p_tipo = 'K'.
+
+    PERFORM bdc_field       USING 'IKPF-LGORT'
+                                  datos-lgort.
+  ELSE.
+    PERFORM bdc_field       USING 'IKPF-LGORT'
+                                     ' '.
+  ENDIF.
+
+  CASE p_tipo.
+    WHEN 'W' OR 'V' OR 'K' OR 'O' OR 'M'.
+      PERFORM bdc_field       USING 'IKPF-SOBKZ'
+                                      p_tipo.
+
+  ENDCASE.
+
+*    IF usr01-datfm = '5'.
+*   MOVE: p_fechad TO aux.
+*   CLEAR p_fechad.
+*   MOVE: aux(4) TO p_fechad+4(4),
+*         aux+4(2) TO p_fechad+2(2),
+*         aux+6(2) TO p_fechad(2).
+*   CLEAR aux.
+*
+*   MOVE: p_fechac TO aux.
+*   CLEAR p_fechac.
+*   MOVE: aux(4) TO p_fechac+4(4),
+*         aux+4(2) TO p_fechac+2(2),
+*         aux+6(2) TO p_fechac(2).
+*   CLEAR aux.
+*
+*  ENDIF.
+
+
+  APPEND i_doc_inven.
+ENDFORM.                    " cabecera
+
+
+*&---------------------------------------------------------------------*
+*&      Form  BDC_DYNPRO
+*&---------------------------------------------------------------------*
+*    Screen data
+*----------------------------------------------------------------------*
+FORM bdc_dynpro USING    program dynpro.
+  CLEAR bdcdata.
+  bdcdata-program  = program.
+  bdcdata-dynpro   = dynpro.
+  bdcdata-dynbegin = 'X'.
+  APPEND bdcdata.
+ENDFORM.                    " BDC_DYNPRO
+
+*&---------------------------------------------------------------------*
+*&      Form  BDC_FIELD
+*&---------------------------------------------------------------------*
+*  Field data to be populated
+*----------------------------------------------------------------------*
+FORM bdc_field USING    fnam fval.
+  CLEAR bdcdata.
+  bdcdata-fnam = fnam.
+  bdcdata-fval = fval.
+  APPEND bdcdata.
+ENDFORM.                    " BDC_FIELD
+*&---------------------------------------------------------------------*
+*&      Form  AÑADIR_POSICIÓN
+*&---------------------------------------------------------------------*
+* Add items to the inventory document.
+*----------------------------------------------------------------------*
+FORM anadir_posicion.
+  DATA: d_cant(16) TYPE p DECIMALS 4.
+
+* Item with material and quantity.
+  PERFORM bdc_dynpro      USING 'SAPMM07I' '0731'.
+  PERFORM bdc_field       USING 'BDC_CURSOR'
+                                'ISEG-ERFMG(01)'.
+  PERFORM bdc_field       USING 'BDC_OKCODE'
+                                '/00'.
+
+* Depending on the inventory type, populate either the customer or the vendor.
+  CASE p_tipo.
+    WHEN 'W' OR 'V'.
+      PERFORM bdc_field       USING 'ISEGK-KUNNR'
+                                   p_kunnr.
+    WHEN 'O' OR 'M'.
+      PERFORM bdc_field       USING 'ISEGK-LIFNR'
+                                    p_lifnr.
+*Internal Correction. Vendor Consignment Inventory
+    WHEN 'K'.
+      PERFORM bdc_field       USING 'ISEGK-LIFNR'
+                                    p_lifnr.
+
+  ENDCASE.
+
+  PERFORM bdc_field       USING 'ISEG-MATNR(01)'
+                                datos-matnr.
+
+  PERFORM bdc_field       USING 'ISEG-CHARG(01)'
+                                datos-charg.
+
+*  IF NOT datos-msehi IS INITIAL.
+*    DATA: ld_unit TYPE string.
+*    CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+*      EXPORTING
+*        input          = datos-msehi
+*        language       = sy-langu
+*      IMPORTING
+*        output         = ld_unit
+*      EXCEPTIONS
+*        unit_not_found = 1
+*        OTHERS         = 2.
+**    DATA(ld_unit) = |{ datos-msehi ALPHA = OUT }|.
+**    data(ld_unit) = |{ datos-msehi unit = out }|.
+*    PERFORM bdc_field       USING 'ISEG-ERFME(01)'
+*                              ld_unit.
+*
+*  ENDIF.
+  IF NOT datos-erfme IS INITIAL.
+    PERFORM bdc_field       USING 'ISEG-ERFME(01)'
+                              datos-erfme.
+
+  ENDIF.
+
+* Cambiamos el stock a un numero para evitar el fallo.
+*  PERFORM cambiar_cantidad USING datos-stock
+*                           CHANGING d_cant.
+  DATA: ld_quan_str TYPE string.
+
+
+  IF datos-stock NE 0.
+*  IF d_cant NE 0.
+    ld_quan_str = |{ datos-stock NUMBER = USER }|.
+    PERFORM bdc_field       USING 'ISEG-ERFMG(01)'
+*                                  datos-stock
+                                  ld_quan_str
+.
+  ELSE.
+    PERFORM bdc_field       USING 'ISEG-XNULL(01)'
+                                  'X'.
+  ENDIF.
+
+*MOD JCRF
+  IF datos-t_stock = space.
+    datos-t_stock = 1.
+  ENDIF.
+  PERFORM bdc_field USING 'ISEG-BSTAR(01)' datos-t_stock.
+*END MOD
+*  IF datos-grund <> ' ' AND datos-grund <> '000'.                   "commented by tushar
+*    PERFORM bdc_field USING 'ISEG-GRUND(01)' datos-grund.         "commented by tushar
+*  ENDIF.                                                                 "commented by tushar
+
+ENDFORM.                    " AÑADIR_POSICION
+*&---------------------------------------------------------------------*
+*&      Form  grabar_documento
+*&---------------------------------------------------------------------*
+FORM grabar_documento.
+  PERFORM bdc_dynpro      USING 'SAPMM07I' '0731'.
+  PERFORM bdc_field       USING 'BDC_CURSOR'
+                                'ISEG-MATNR(01)'.
+  PERFORM bdc_field       USING 'BDC_OKCODE'
+                                '=BU'.
+
+  CLEAR messtab. REFRESH messtab.
+* LLamamos a la transacción para que genere el doc. de inventario.
+  CALL TRANSACTION 'MI09' USING bdcdata
+                   MODE   mode
+                   UPDATE 'S'
+                   MESSAGES INTO messtab.
+
+* Mensajes
+  PERFORM mensajes_mi10.
+
+ENDFORM.                    " grabar_documento
+*&---------------------------------------------------------------------*
+*&      Form  MENSAJES_MI10
+*&---------------------------------------------------------------------*
+FORM mensajes_mi10.
+* Guardamos el mensaje obtenido al ejecutar el call.
+
+  DATA: err_n(3) TYPE n.
+  DATA: lineas TYPE i.
+  DATA: inven LIKE i_doc_inven-cod.
+
+
+  LOOP AT messtab.
+    CLEAR err_n.
+    MOVE messtab-msgnr TO err_n.
+
+    CALL FUNCTION 'WRITE_MESSAGE'
+      EXPORTING
+        msgid  = messtab-msgid
+        msgno  = err_n
+        msgty  = messtab-msgtyp
+        msgv1  = messtab-msgv1
+        msgv2  = messtab-msgv2
+        msgv3  = messtab-msgv3
+        msgv4  = messtab-msgv4
+*       MSGV5  = ' '
+      IMPORTING
+*       ERROR  =
+        messg  = r_message
+*       MSGLN  =
+      EXCEPTIONS
+        OTHERS = 1.
+
+    CLEAR error_datos.
+    MOVE: messtab-msgtyp    TO error_datos-err,
+          r_message-msgtx   TO error_datos-texto.
+*    el mensaje con el numero del documento de inventario
+    IF messtab-msgtyp EQ 'S'.
+*      sera el del ultimo registro metido
+      DESCRIBE TABLE i_doc_inven LINES lineas.
+      PERFORM coger_inven USING r_message-msgtx
+                          CHANGING inven.
+      READ TABLE i_doc_inven INDEX lineas.
+      i_doc_inven-cod = inven.
+      MODIFY i_doc_inven INDEX lineas.
+    ENDIF.
+    APPEND error_datos.
+  ENDLOOP.
+
+ENDFORM.                    " MENSAJES_MI10
+
+*&---------------------------------------------------------------------*
+*&      Form  F4_P_PATH
+*&---------------------------------------------------------------------*
+*   Ayuda para la ruta del fichero
+*----------------------------------------------------------------------*
+FORM f4_p_path.
+
+* CVECC60: Inicio modif. (ESGAIE045 27.03.2007)
+
+*  CALL FUNCTION 'WS_FILENAME_GET'              "Delete
+*    EXPORTING
+**   DEF_FILENAME           = ' '
+*      def_path               = 'C:\'
+*      mask                   = text-910
+*      mode                   = 'O'
+*      title                  = text-911
+*    IMPORTING
+*      filename               = fichero
+**   RC                     =
+* EXCEPTIONS
+*     inv_winsys             = 1
+*     no_batch               = 2
+*     selection_cancel       = 3
+**    SELECTION_ERROR        = 4
+**    OTHERS                 = 5.
+
+  DATA: filetable    LIKE file_table OCCURS 0 WITH HEADER LINE, "Insert
+        n_resultados TYPE i,                                    "Insert
+        title        TYPE string,                               "Insert
+        filter       TYPE string.                               "Insert
+
+  MOVE: TEXT-911 TO title,                                      "Insert
+        TEXT-910 TO filter.                                     "Insert
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog        "Insert
+    EXPORTING
+      window_title            = title
+*     default_extension       =
+*     default_filename        =
+      file_filter             = filter
+*     with_encoding           =
+      initial_directory       = 'C:\'
+*     multiselection          =
+    CHANGING
+      file_table              = filetable[]
+      rc                      = n_resultados
+*     user_action             =
+*     file_encoding           =
+    EXCEPTIONS
+      file_open_dialog_failed = 1
+      cntl_error              = 2
+      error_no_gui            = 3
+      not_supported_by_gui    = 4
+      OTHERS                  = 5.
+  IF sy-subrc <> 0.                                             "Insert
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno           "Insert
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.        "Insert
+  ENDIF.
+  READ TABLE filetable INDEX 1.                                 "Insert
+  IF sy-subrc = 0.                                              "Insert
+    MOVE filetable-filename TO fichero.                         "Insert
+  ENDIF.
+* CVECC60: Fin modif. (ESGAIE045 27.03.2007)
+
+ENDFORM.                                                    " F4_P_PATH
+
+
+FORM f_leer_fichero_xlsx TABLES pt_datos STRUCTURE datos
+                         USING VALUE(ip_fichero) TYPE csequence.
+  REFRESH pt_datos.
+  TYPES: BEGIN OF ty_s_fichero,
+           matnr   LIKE datos-matnr,
+           lgort   LIKE datos-lgort,
+           werks   LIKE datos-werks,
+           stock   LIKE datos-stock,
+           t_stock LIKE datos-t_stock,
+           erfme   LIKE datos-erfme,
+           grund   LIKE datos-grund,
+           charg   LIKE datos-charg,
+
+
+         END OF ty_s_fichero.
+  TRY.
+      DATA: lt_datos TYPE TABLE OF ty_s_fichero.
+      zcl_ga_file=>read_xlsx(
+        EXPORTING
+          ip_file          = CONV #( ip_fichero )
+      ip_local         = abap_true
+      ip_has_header    = abap_false
+      ip_start_row     = 2                " Dummy para B20 int1 (siempre local)      " 1 - 2 CHNGE BY TUSHAR
+*      ip_start_column  = 0                " Dummy para B20 int1 (siempre local)
+        CHANGING
+          iot_target_table = lt_datos[]
+      ).
+*      WRITE: / 'Rows read:', LINES( lt_datos ).        "ADDED B TUSHAR
+*      DELETE lt_datos WHERE matnr IS INITIAL.  " COMMENT BY TUSHAR
+      LOOP AT lt_datos ASSIGNING FIELD-SYMBOL(<lf_datos>).
+
+        IF <lf_datos>-t_stock = ''.
+          <lf_datos>-t_stock = '1'.
+        ENDIF.
+
+        APPEND CORRESPONDING #( <lf_datos> ) TO pt_datos.
+      ENDLOOP.
+
+    CATCH zcx_ga_file. " Excepción clase
+      REFRESH pt_datos.
+  ENDTRY.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  OBTENER_DATOS_EXCEL
+*&---------------------------------------------------------------------*
+*   Obtener datos de un fichero excel
+*----------------------------------------------------------------------*
+
+FORM obtener_datos_excel.
+*Start modification CSDPASAPD-811 by I08005 at 14 nov 2023
+  IF fichero CP '*.xlsx'.
+    PERFORM f_leer_fichero_xlsx TABLES datos
+                                USING fichero.
+    RETURN.
+  ENDIF.
+
+*End modification CSDPASAPD-811 by I08005 at 14 nov 2023
+*  REFRESH i_excel.
+*  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+*    EXPORTING
+*      filename                = fichero
+*      i_begin_col             = c_begin_col
+*      i_begin_row             = c_begin_row
+*      i_end_col               = c_end_col
+*      i_end_row               = c_end_row
+*    TABLES
+*      intern                  = i_excel
+*    EXCEPTIONS
+*      inconsistent_parameters = 1
+*      upload_ole              = 2
+*      OTHERS                  = 3.
+*  IF sy-subrc <> 0.
+*    MESSAGE e023(zc).
+*  ENDIF.
+*
+*  SORT i_excel BY fila columna.
+*  REFRESH datos.
+*  LOOP AT i_excel.
+*    CONDENSE i_excel-valor.
+*    CASE i_excel-columna.
+*      WHEN '0001'.
+*        MOVE i_excel-valor TO datos-matnr.
+*      WHEN '0002'.
+*        MOVE i_excel-valor TO datos-lgort.
+*      WHEN '0003'.
+*        MOVE i_excel-valor TO datos-werks.
+*      WHEN '0008'.
+*        MOVE i_excel-valor TO datos-charg.
+*      WHEN '0004'.
+*        MOVE i_excel-valor TO datos-stock.
+**MOD JCRF
+*      WHEN '0005'.
+*        IF i_excel-valor = ''.
+*          datos-t_stock = '1'.
+*        ELSE.
+*          MOVE i_excel-valor TO datos-t_stock.
+*        ENDIF.
+**END MOD
+*      WHEN '0006'.
+*        MOVE i_excel-valor TO datos-erfme.
+*      WHEN '0007'.
+*        MOVE i_excel-valor TO datos-grund.
+*    ENDCASE.
+*    AT END OF fila.
+*      APPEND datos.
+*      CLEAR datos.
+*    ENDAT.
+*  ENDLOOP.
+*
+**MOD JCRF
+*  LOOP AT datos WHERE t_stock = ''.
+*    datos-t_stock = '1'.
+*    MODIFY datos.
+*  ENDLOOP.
+**END MOD
+*  LOOP AT datos.
+*    IF datos-matnr = space.
+*      DELETE datos.
+*    ENDIF.
+*  ENDLOOP.
+ENDFORM.                                          " OBTENER_DATOS_EXCEL
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  DUPLICADOS
+*&---------------------------------------------------------------------*
+*   Eliminamos los registros con los mismos materiales
+*----------------------------------------------------------------------*
+FORM duplicados.
+  DATA: mat_anterior LIKE datos-matnr.
+  DATA: sw_error.
+  DATA: pos_ini TYPE i,
+        pos_fin TYPE i.
+  DATA: tip_anterior LIKE datos-t_stock.
+
+  SORT datos BY matnr.
+
+  LOOP AT datos.
+    IF mat_anterior = datos-matnr AND tip_anterior = datos-t_stock.
+      LOOP AT datos WHERE matnr = datos-matnr.
+        MOVE-CORRESPONDING datos TO error_datos.
+        MOVE: 'E' TO error_datos-err,
+              TEXT-103 TO error_datos-texto.
+        APPEND error_datos.
+      ENDLOOP.
+      DELETE datos WHERE matnr = mat_anterior.
+    ELSE.
+      mat_anterior = datos-matnr.
+      tip_anterior = datos-t_stock.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.                    "DUPLICADOS
+
+
+*&---------------------------------------------------------------------*
+*&      Form  COGER_INVEN
+*&---------------------------------------------------------------------*
+*   Coge el cod de inventario de la cadena de creación
+*----------------------------------------------------------------------*
+
+FORM coger_inven USING message
+                       CHANGING inven.
+  DATA: inicio   TYPE i,
+        fin      TYPE i,
+        total    TYPE i,
+        contador TYPE i,
+        longitud TYPE i.
+
+  CLEAR inven.
+  contador = 0.
+  longitud = strlen( message ).
+*  WHILE contador < longitud.
+*    IF message+contador(1) = '0' OR
+*       message+contador(1) = '1' OR
+*       message+contador(1) = '2' OR
+*       message+contador(1) = '3' OR
+*       message+contador(1) = '4' OR
+*       message+contador(1) = '5' OR
+*       message+contador(1) = '6' OR
+*       message+contador(1) = '7' OR
+*       message+contador(1) = '8' OR
+*       message+contador(1) = '9'.
+*      IF inicio IS INITIAL.
+*        inicio = contador.
+*      ELSE.
+*        fin = contador.
+*      ENDIF.
+*    ENDIF.
+*    ADD 1 TO contador.
+*  ENDWHILE.
+WHILE contador < longitud.
+IF message+contador(1) BETWEEN '0' AND '9'.
+IF inicio IS INITIAL.
+inicio = contador.
+ENDIF.
+fin = contador.   " # always update fin to the latest digit position
+ENDIF.
+ADD 1 TO contador.
+ENDWHILE.
+
+
+  total = fin - inicio.
+  ADD 1 TO total.
+  inven = message+inicio(total).
+*Si existe la palabra DYNPRO es que se ha producido un error en el BI
+  IF message CP '*dynpro*'.
+    CLEAR inven.
+  ENDIF.
+ENDFORM.                    "COGER_INVEN
+
+* Mostramos con la MI20 todos los documentos de inventario seleccionados
+
+  AT USER-COMMAND.
+
+  CASE sy-ucomm.
+
+    WHEN 'TMPL'.
+      PERFORM download_template.
+      EXIT.
+
+  ENDCASE.
+
+  DATA: campo(40).
+  DATA: conta(2).
+  DATA: sw_primer(1).
+
+  RANGES: invent FOR iseg-iblnr.
+  DATA: centro      LIKE iseg-werks,
+        aux_inv(10) TYPE c.
+
+  IF sy-ucomm = 'MI20'.
+
+*-------------WSDEVERP-1903----------24/06/2025.
+* Cambiamos el formato de los campos de fecha.
+
+  DATA: f_fechac  TYPE char10.
+  WRITE p_fechac TO f_fechac.
+
+*-------------WSDEVERP-1903-----Fin-----24/06/2025.
+
+* Actualizar marcados.
+    PERFORM actualizar_marcados.
+
+    READ TABLE i_doc_inven WITH KEY marca = 'X'.
+    IF sy-subrc = 0.
+
+      REFRESH bdcdata.
+      PERFORM bdc_dynpro      USING 'RM07IDIF' '1000'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                'IM_LGORT-LOW'.
+      PERFORM bdc_field       USING 'IM_WERKS-LOW'
+                                  ''.
+      PERFORM bdc_field       USING 'IM_LGORT-LOW'
+                                ''.
+      PERFORM bdc_field       USING 'IM_MATNR-LOW'
+                                   ''.
+
+      PERFORM bdc_field       USING 'P_VARI'
+                                '/STOCKS'.
+      PERFORM bdc_field       USING 'P_LEINF'
+                                'X'.
+      READ TABLE i_doc_inven WITH KEY marca = 'X'.
+      PERFORM bdc_field  USING 'IM_IBLNR-LOW'
+                              i_doc_inven-cod.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+*                                '=%004'.  "Delete (CV ECC60)
+                                 '=%005'.  "Insert (CV ECC60)
+      PERFORM bdc_dynpro      USING 'SAPLALDB' '3000'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                '=ACPT'.
+
+      conta = 1.
+
+      LOOP AT i_doc_inven WHERE marca = 'X'.
+
+        CONCATENATE 'RSCSEL-SLOW_I(0' conta ')' INTO campo.
+        PERFORM bdc_field       USING campo
+                                i_doc_inven-cod.
+        ADD 1 TO conta.
+
+      ENDLOOP.
+
+
+
+      CONCATENATE 'RSCSEL-SLOW_I(0' conta ')' INTO campo.
+
+      PERFORM bdc_field       USING campo
+                                    '__________'.
+
+
+      PERFORM bdc_dynpro      USING 'RM07IDIF' '1000'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'IM_SELKB'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=ONLI'.
+      PERFORM bdc_field       USING 'IM_WERKS-LOW'
+                                    ''.
+
+*read table I_DOC_INVEN With key MARCA = 'X'.
+*perform bdc_field  using 'IM_IBLNR-LOW'
+*                            I_DOC_INVEN-COD.
+
+      PERFORM bdc_field       USING 'IM_SELKB'
+                                    'X'.
+      PERFORM bdc_field       USING 'GJAHR-LOW'
+*-------------WSDEVERP-1903-----------------24/06/2025.
+*                                    p_fechac+4(4).
+                                     f_fechac+6(4).
+
+      i_doc_inven-p_fechac =  p_fechac.
+*-------------WSDEVERP-1903-----Fin-----24/06/2025.
+
+      PERFORM bdc_field       USING 'P_VARI'
+                                    '/STOCKS'.
+      PERFORM bdc_field       USING 'P_LEINF'
+                                    'X'.
+      PERFORM bdc_dynpro      USING 'SAPLDIXM' '0100'.
+      PERFORM bdc_field       USING 'BDC_OKCODE'
+                                    '=F08'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    'IX-SELB1'.
+      PERFORM bdc_field       USING 'IX-SELB1'
+                                    'X'.
+      PERFORM bdc_field       USING 'IX-SELB2'
+                                    'X'.
+      PERFORM bdc_field       USING 'IX-SELB3'
+                                    'X'.
+      PERFORM bdc_dynpro      USING 'SAPMSSY0' '0120'.
+      PERFORM bdc_field       USING 'BDC_CURSOR'
+                                    '04/03'.
+      mode = 'E'.
+      CALL TRANSACTION 'MI20'
+                            USING bdcdata
+                            MODE   mode
+                            UPDATE 'S'
+                            MESSAGES INTO messtab.
+
+    ENDIF.
+  ENDIF.
+*&---------------------------------------------------------------------*
+*&      Form  actualizar_marcados
+*&---------------------------------------------------------------------*
+*   Actualizamos con los doc. de inv. que se han marcado
+*----------------------------------------------------------------------*
+FORM actualizar_marcados.
+  DATA: d_linea    LIKE sy-index, " Línea en el listado
+        l_d_indice LIKE sy-index.    " Índice de la tabla interna
+
+  LOOP AT i_doc_inven.
+    CLEAR i_doc_inven-marca.
+    MODIFY i_doc_inven.
+  ENDLOOP.
+
+  d_linea = 11.
+  DO.
+    CLEAR i_doc_inven-marca.
+    READ LINE d_linea FIELD VALUE i_doc_inven-marca.
+    IF sy-subrc <> 0.
+      EXIT.
+    ELSE.
+      IF i_doc_inven-marca = 'X'.
+        l_d_indice = d_linea - 10.
+        READ TABLE i_doc_inven INDEX l_d_indice.
+        i_doc_inven-marca = 'X'.
+        MODIFY i_doc_inven INDEX l_d_indice.
+      ENDIF.
+
+      ADD 1 TO d_linea.
+    ENDIF.
+  ENDDO.
+
+ENDFORM.                    " actualizar_marcados
+*&---------------------------------------------------------------------*
+*&      Form  CAMBIAR_CANTIDAD
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_DATOS_STOCK  text
+*      <--P_D_CANT  text
+*----------------------------------------------------------------------*
+FORM cambiar_cantidad USING    p_stock
+                      CHANGING p_cant.
+  DATA: d_aux(16).
+  CLEAR p_cant.
+
+  d_aux = p_stock.
+  TRANSLATE d_aux USING '. '.
+  CONDENSE d_aux NO-GAPS.
+  TRANSLATE d_aux USING ',.'.
+  p_cant = d_aux.
+
+
+ENDFORM.                    " CAMBIAR_CANTIDAD
+
+*Mod Javi Arce.Dic10.SDR542-Chequeo errores ZMF01
+*&---------------------------------------------------------------------*
+*&      Form  fill_catalog_alv
+*&---------------------------------------------------------------------*
+FORM fill_catalog_alv.
+
+  DATA: is_lvc_cat TYPE lvc_s_fcat.
+
+  REFRESH i_fieldcat.
+
+* Icono Semáforo
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'ICON'.
+  is_fieldcat-icon = 'X'.
+  is_fieldcat-seltext_l = is_lvc_cat-scrtext_l = 'Status'.
+  is_fieldcat-seltext_m = is_lvc_cat-scrtext_m = 'Status'.
+  is_fieldcat-seltext_s = is_lvc_cat-scrtext_s = 'Status'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+
+  "Material
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'MATNR'.
+  is_fieldcat-ref_tabname = is_lvc_cat-ref_table = 'MARA'.
+  is_fieldcat-ref_fieldname = is_lvc_cat-ref_field = 'MATNR'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "Almacén
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'LGORT'.
+  is_fieldcat-ref_tabname = is_lvc_cat-ref_table = 'MARD'.
+  is_fieldcat-ref_fieldname = is_lvc_cat-ref_field = 'LGORT'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "Centro
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'WERKS'.
+  is_fieldcat-ref_tabname = is_lvc_cat-ref_table = 'T001W'.
+  is_fieldcat-ref_fieldname = is_lvc_cat-ref_field = 'WERKS'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "Stock
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'STOCK'.
+  is_fieldcat-ref_tabname = 'ISEG'.
+  is_fieldcat-ref_fieldname = 'ERFMG'.
+
+  is_fieldcat-seltext_s = TEXT-001.
+  is_fieldcat-seltext_m = TEXT-001.
+  is_fieldcat-seltext_l = TEXT-001.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "Tipo de stocks (inventario)
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'T_STOCK'.
+  is_fieldcat-ref_tabname = is_lvc_cat-ref_table = 'ISEG'.
+  is_fieldcat-ref_fieldname = is_lvc_cat-ref_field = 'BSTAR'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "Unidad medida de entrada (inventario)
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'MSEHI'.
+  is_fieldcat-ref_tabname = is_lvc_cat-ref_table = 'T006'.
+  is_fieldcat-ref_fieldname = is_lvc_cat-ref_field = 'MSEHI'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "Motivo del inventario
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'GRUND'.
+  is_fieldcat-ref_tabname = is_lvc_cat-ref_table = 'ISEG'.
+  is_fieldcat-ref_fieldname = is_lvc_cat-ref_field = 'GRUND'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "Centro
+  CLEAR: is_lvc_cat,
+  is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'CHARG'.
+  is_fieldcat-ref_tabname = is_lvc_cat-ref_table = 'MSEG'.
+  is_fieldcat-ref_fieldname = is_lvc_cat-ref_field = 'CHARG'.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+  "ERROR
+  CLEAR: is_lvc_cat,
+         is_fieldcat.
+  is_fieldcat-fieldname = is_lvc_cat-fieldname = 'MSGTEXT'.
+  is_fieldcat-inttype = 'C'.
+  is_fieldcat-seltext_s = TEXT-002.
+  is_fieldcat-seltext_m = TEXT-002.
+  is_fieldcat-seltext_l = TEXT-002.
+  APPEND is_lvc_cat TO i_fieldcat.
+  APPEND is_fieldcat TO it_fieldcat.
+
+  MOVE 'X' TO is_layout-colwidth_optimize.
+  MOVE 'COLOR' TO is_layout-coltab_fieldname.
+
+ENDFORM.                    "fill_catalog_alv
+*&---------------------------------------------------------------------*
+*&      Form  print_report_alv
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM print_report_alv.
+
+  PERFORM setlayout.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+*     I_INTERFACE_CHECK        = ' '
+*     I_BYPASSING_BUFFER       = ' '
+*     I_BUFFER_ACTIVE          = ' '
+      i_callback_program       = 'ZBAMI10_F'
+      i_callback_pf_status_set = 'SET_STATUS_ALV'
+      i_callback_user_command  = 'USER_COMMAND'
+*     i_callback_top_of_page   = 'TOP_OF_PAGE'
+*     I_CALLBACK_HTML_TOP_OF_PAGE       = ' '
+*     I_CALLBACK_HTML_END_OF_LIST       = ' '
+*     I_STRUCTURE_NAME         =
+*     I_BACKGROUND_ID          = ' '
+*     I_GRID_TITLE             =
+*     I_GRID_SETTINGS          =
+      is_layout                = is_layout
+      it_fieldcat              = it_fieldcat
+*     IT_EXCLUDING             =
+*     IT_SPECIAL_GROUPS        =
+*     IT_SORT                  =
+*     IT_FILTER                =
+*     IS_SEL_HIDE              =
+      i_default                = ' '
+      i_save                   = 'A'
+      is_variant               = is_variant
+*     IT_EVENTS                =
+*     IT_EVENT_EXIT            =
+*     IS_PRINT                 =
+*     IS_REPREP_ID             =
+*     I_SCREEN_START_COLUMN    = 0
+*     I_SCREEN_START_LINE      = 0
+*     I_SCREEN_END_COLUMN      = 0
+*     I_SCREEN_END_LINE        = 0
+*     I_HTML_HEIGHT_TOP        = 0
+*     I_HTML_HEIGHT_END        = 0
+*     IT_ALV_GRAPHICS          =
+*     IT_HYPERLINK             =
+*     IT_ADD_FIELDCAT          =
+*     IT_EXCEPT_QINFO          =
+*     IR_SALV_FULLSCREEN_ADAPTER        =
+*     IMPORTING
+*     E_EXIT_CAUSED_BY_CALLER  =
+*     ES_EXIT_CAUSED_BY_USER   =
+    TABLES
+      t_outtab                 = datos
+*     EXCEPTIONS
+*     PROGRAM_ERROR            = 1
+*     OTHERS                   = 2
+    .
+  IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  ENDIF.
+
+ENDFORM.                    "print_ReportALV
+
+*&---------------------------------------------------------------------*
+*&      Form  setLayout
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM setlayout.
+  is_layout-zebra = 'X'.
+  is_layout-colwidth_optimize = 'X'.
+ENDFORM.                    "setLayout
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CONVERT_MATERIAL
+*&---------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+FORM convert_material.
+
+  LOOP AT datos.
+
+    CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+      EXPORTING
+        input  = datos-matnr
+      IMPORTING
+        output = datos-matnr.
+
+    MODIFY datos.
+
+  ENDLOOP.
+
+ENDFORM.                    " CONVERT_MATERIAL
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  f_check_material
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM f_check_material.
+  DATA: i TYPE i VALUE 0.
+  DATA: aux_datos LIKE datos OCCURS 0 WITH HEADER LINE.
+  LOOP AT datos.
+    i = i + 1.
+    datos-posicion = i.
+    CONDENSE: datos-matnr,
+              datos-lgort,
+              datos-werks,
+              datos-t_stock,
+              datos-erfme.
+    TRANSLATE datos-werks TO UPPER CASE.
+    TRANSLATE datos-lgort TO UPPER CASE.
+    MODIFY datos.
+  ENDLOOP.
+  DATA: d_lgort(5)   TYPE c.
+
+  aux_datos[] = datos[].
+  LOOP AT datos.
+    REFRESH datos-color.
+    CLEAR ls_color-color-col.
+    datos-error = ''.
+    datos-icon = '@08@'.
+    ls_color-color-col = 3.
+    IF d_lgort IS INITIAL.
+      d_lgort = datos-lgort.
+    ENDIF.
+    IF d_lgort <> datos-lgort.
+      "Si se ha cambiado de almacén
+      d_error = 'X'. datos-error = 'X'.
+      datos-icon = '@0A@'.
+      ls_color-color-col = 6.
+      datos-msgtext = TEXT-e15.
+    ELSE.
+      " Chequeamos si el material existe
+      SELECT SINGLE *
+      FROM mara
+      WHERE matnr = datos-matnr.
+      IF sy-subrc <> 0.
+        d_error = 'X'. datos-error = 'X'.
+        datos-icon = '@0A@'.
+        ls_color-color-col = 6.
+        CONCATENATE TEXT-e01 datos-matnr TEXT-e02 INTO datos-msgtext SEPARATED BY space.
+      ELSE.
+        " Chequeamos si el centro existe
+        SELECT SINGLE *
+        FROM t001w
+        WHERE werks = datos-werks.
+        IF sy-subrc <> 0.
+          d_error = 'X'. datos-error = 'X'.
+          datos-icon = '@0A@'.
+          ls_color-color-col = 6.
+          CONCATENATE TEXT-e05 datos-werks TEXT-e02 INTO datos-msgtext SEPARATED BY space.
+        ELSE.
+          "Si no se ha seleccionado stock de tipo especial, o es de consigna de proveedor
+          IF p_tipo IS INITIAL OR p_tipo = 'K'.
+            " Chequeamos si el almacén existe
+            SELECT SINGLE *
+            FROM t001l
+            WHERE werks = datos-werks
+              AND lgort = datos-lgort.
+          ENDIF.
+
+
+          IF sy-subrc <> 0.
+            d_error = 'X'. datos-error = 'X'.
+            datos-icon = '@0A@'.
+            ls_color-color-col = 6.
+            CONCATENATE TEXT-e06 datos-lgort TEXT-e02 TEXT-e03 datos-werks INTO datos-msgtext SEPARATED BY space.
+          ELSE.
+            " Chequeamos si la unidad de medida existe
+            IF datos-erfme IS NOT INITIAL.
+              SELECT SINGLE msehi INTO datos-msehi
+              FROM t006a
+              WHERE mseh3 = datos-erfme
+                AND spras = sy-langu.
+            ENDIF.
+            IF sy-subrc <> 0.
+              d_error = 'X'. datos-error = 'X'.
+              datos-icon = '@0A@'.
+              ls_color-color-col = 6.
+              CONCATENATE TEXT-e08 datos-erfme TEXT-e02 INTO datos-msgtext SEPARATED BY space.
+            ELSE.
+              "Chequeamos si el tipo de stock existe (Tipos 1, 2, 3 y 4)
+              IF datos-t_stock <> 1 AND datos-t_stock <> 2 AND datos-t_stock <> 3 AND datos-t_stock <> 4.
+                d_error = 'X'. datos-error = 'X'.
+                datos-icon = '@0A@'.
+                ls_color-color-col = 6.
+                CONCATENATE TEXT-e07 datos-t_stock TEXT-e02 INTO datos-msgtext SEPARATED BY space.
+              ELSE.
+                " Chequeamos si el material existe para el centro.
+                SELECT SINGLE *
+                FROM marc
+                WHERE matnr = datos-matnr
+                  AND werks = datos-werks.
+                IF sy-subrc <> 0.
+                  d_error = 'X'. datos-error = 'X'.
+                  datos-icon = '@0A@'.
+                  ls_color-color-col = 6.
+                  CONCATENATE TEXT-e01 datos-matnr TEXT-e02 TEXT-e03 datos-werks INTO datos-msgtext SEPARATED BY space.
+                ELSE.
+                  "Chequeamos que el material no esté obsoleto
+*                IF marc-mmsta = 'ZT'.
+*                  d_error = 'X'. datos-error = 'X'.
+*                  datos-icon = '@0A@'.
+*                  ls_color-color-col = 6.
+*                  CONCATENATE text-e01 datos-matnr text-e09 INTO datos-msgtext SEPARATED BY space.
+*                ELSE.
+*                  "Chequeamos que el material no sea de Consumo Lento
+*                  IF marc-mmsta = 'CL'.
+*                    d_error = 'X'. datos-error = 'X'.
+*                    datos-icon = '@0A@'.
+*                    ls_color-color-col = 6.
+*                    CONCATENATE text-e01 datos-matnr text-e12 INTO datos-msgtext SEPARATED BY space.
+*                  ELSE.
+                  "Chequeamos que el material permita la unidad de medida indicada
+                  IF datos-msehi IS NOT INITIAL.
+                    SELECT SINGLE *
+                    FROM marm
+                    WHERE matnr = datos-matnr
+                      AND meinh = datos-msehi.
+                  ENDIF.
+                  IF sy-subrc <> 0.
+                    d_error = 'X'. datos-error = 'X'.
+                    datos-icon = '@0A@'.
+                    ls_color-color-col = 6.
+                    CONCATENATE TEXT-e01 datos-matnr TEXT-e13 datos-msehi INTO datos-msgtext SEPARATED BY space.
+                  ELSE.
+                    "Si no se ha seleccionado stock de tipo especial, o es de consigna de proveedor
+                    IF p_tipo IS INITIAL OR p_tipo = 'K'.
+                      "Chequeamos que el material existe en el almacén
+                      IF datos-charg IS NOT INITIAL .
+                        SELECT SINGLE * FROM mchb
+                                        WHERE matnr = datos-matnr
+                                          AND werks = datos-werks
+                                          AND lgort = datos-lgort
+                                          AND charg = datos-charg.
+* ABG CISD254-62 13.02.2025
+                        IF sy-subrc NE 0.
+                          SELECT SINGLE * FROM mkol
+                                          WHERE matnr = datos-matnr
+                                            AND werks = datos-werks
+                                            AND lgort = datos-lgort
+                                            AND charg = datos-charg.
+                        ENDIF.
+* ABG Fin CISD254-62 13.02.2025
+                      ELSE.
+                        SELECT SINGLE *
+                        FROM mard
+                        WHERE matnr = datos-matnr
+                          AND werks = datos-werks
+                          AND lgort = datos-lgort.
+                      ENDIF..
+                    ENDIF.
+                    IF sy-subrc <> 0.
+                      d_error = 'X'. datos-error = 'X'.
+                      datos-icon = '@0A@'.
+                      ls_color-color-col = 6.
+                      CONCATENATE TEXT-e01 datos-matnr TEXT-e02 TEXT-e04 datos-lgort INTO datos-msgtext SEPARATED BY space.
+                    ELSE.
+                      "Chequeamos si existe un documento de inventario activo
+                      CASE p_tipo.
+                          "INVENTARIO ALMACEN.
+                        WHEN space.
+*                          IF NOT mard-sperr IS INITIAl  .
+                          IF NOT mard-sperr IS INITIAL OR  ( NOT mchb-sperc IS INITIAL OR NOT mkol-spers IS INITIAL ).
+                            SELECT SINGLE *
+                            FROM iseg
+                            WHERE matnr = datos-matnr
+                              AND werks = datos-werks
+                              AND lgort = datos-lgort
+                              AND charg = datos-charg
+                              AND bstar = datos-t_stock
+                              AND xdiff = space
+                              AND xloek = space.
+
+                            IF sy-subrc = 0.
+                              d_error = 'X'. datos-error = 'X'.
+                              datos-icon = '@0A@'.
+                              ls_color-color-col = 6.
+                              CONCATENATE TEXT-e01 datos-matnr TEXT-e10 iseg-iblnr INTO datos-msgtext SEPARATED BY space.
+                            ENDIF.
+                          ENDIF.
+                          "INVENTARIO STOCK SUBCONTRATISTA / EMB.RETORNABLE DE PROVEEDOR
+                        WHEN 'O' OR 'M'.
+                          SELECT SINGLE *
+                          FROM mslb
+                          WHERE matnr = datos-matnr
+                            AND werks = datos-werks
+                            AND lifnr = p_lifnr
+                            AND sobkz = p_tipo.
+                          IF sy-subrc <> 0.
+                            d_error = 'X'. datos-error = 'X'.
+                            datos-icon = '@0A@'.
+                            ls_color-color-col = 6.
+                            CONCATENATE TEXT-e01 datos-matnr TEXT-e14 p_tipo INTO datos-msgtext SEPARATED BY space.
+                          ELSE.
+
+                            SELECT SINGLE *
+                            FROM mslb
+                            WHERE matnr = datos-matnr
+                              AND werks = datos-werks
+                              AND lifnr = p_lifnr
+                              AND charg = datos-charg"space
+                              AND sobkz = p_tipo.
+                            IF NOT mslb-lbspr IS INITIAL.
+                              d_error = 'X'. datos-error = 'X'.
+                              datos-icon = '@0A@'.
+                              ls_color-color-col = 6.
+                              CONCATENATE TEXT-e01 datos-matnr TEXT-e10 iseg-iblnr INTO datos-msgtext SEPARATED BY space.
+                            ENDIF.
+                          ENDIF.
+*Mod.Javi Arce.Ene13.Corr.Interno.Inventario consigna proveedor
+                          "INVENTARIO STOCK EN CONSIGNA DE PROVEEDOR
+                        WHEN 'K'.
+                          SELECT SINGLE *
+                          FROM mkol
+                          WHERE matnr = datos-matnr
+                            AND werks = datos-werks
+                            AND lifnr = p_lifnr
+                            AND sobkz = p_tipo.
+                          IF sy-subrc <> 0.
+                            d_error = 'X'. datos-error = 'X'.
+                            datos-icon = '@0A@'.
+                            ls_color-color-col = 6.
+                            CONCATENATE TEXT-e01 datos-matnr TEXT-e14 p_tipo INTO datos-msgtext SEPARATED BY space.
+                          ELSE.
+
+                            SELECT SINGLE *
+                            FROM mkol
+                            WHERE matnr = datos-matnr
+                              AND werks = datos-werks
+                              AND lifnr = p_lifnr
+                              AND charg = datos-charg"space
+                              AND sobkz = p_tipo.
+                            IF NOT mkol-spers IS INITIAL.
+                              SELECT SINGLE *
+                            FROM iseg
+                            WHERE matnr = datos-matnr
+                              AND werks = datos-werks
+                              AND lgort = datos-lgort
+                              AND bstar = datos-t_stock
+                              AND xdiff = space
+                              AND xloek = space.
+                              IF sy-subrc = 0.
+                                d_error = 'X'. datos-error = 'X'.
+                                datos-icon = '@0A@'.
+                                ls_color-color-col = 6.
+                                CONCATENATE TEXT-e01 datos-matnr TEXT-e10 iseg-iblnr INTO datos-msgtext SEPARATED BY space.
+                              ENDIF.
+                            ENDIF.
+                          ENDIF.
+*End Mod.Javi Arce.Ene13.
+                          "INVENTARIO STOCK EN CONSIGNA DE CLIENTE O EMB.RETORNABLE EN CLIENTE
+                        WHEN 'W' OR 'V'.
+                          SELECT SINGLE *
+                          FROM msku
+                          WHERE matnr = datos-matnr
+                            AND werks = datos-werks
+                            AND kunnr = p_kunnr
+                            AND sobkz = p_tipo.
+                          IF sy-subrc <> 0.
+                            d_error = 'X'. datos-error = 'X'.
+                            datos-icon = '@0A@'.
+                            ls_color-color-col = 6.
+                            CONCATENATE TEXT-e01 datos-matnr TEXT-e14 p_tipo INTO datos-msgtext SEPARATED BY space.
+                          ELSE.
+                            SELECT SINGLE *
+                            FROM msku
+                            WHERE matnr = datos-matnr
+                              AND werks = datos-werks
+                              AND kunnr = p_kunnr
+                              AND charg = space
+                              AND sobkz = p_tipo.
+                            IF NOT msku-kuspr IS INITIAL.
+                              d_error = 'X'. datos-error = 'X'.
+                              datos-icon = '@0A@'.
+                              ls_color-color-col = 6.
+                              CONCATENATE TEXT-e01 datos-matnr TEXT-e10 iseg-iblnr INTO datos-msgtext SEPARATED BY space.
+                            ENDIF.
+                          ENDIF.
+                      ENDCASE.
+
+                      IF datos-icon <> '@0A@'. "Si no ha habido error
+                        "Chequeamos que no hay duplicados
+                        LOOP AT aux_datos
+                          WHERE matnr = datos-matnr
+                            AND werks = datos-werks
+                            AND lgort = datos-lgort
+                            AND charg = datos-charg
+                            AND t_stock = datos-t_stock
+                            AND posicion <> datos-posicion.
+                          EXIT.
+                        ENDLOOP.
+                        IF sy-subrc = 0. "Si hay duplicados
+                          d_error = 'X'. datos-error = 'X'.
+                          datos-icon = '@0A@'.
+                          ls_color-color-col = 6.
+                          MOVE TEXT-e11 TO datos-msgtext.
+                        ENDIF.
+                      ENDIF.
+                    ENDIF.
+*                  ENDIF.
+*                  ENDIF.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    APPEND ls_color TO datos-color.
+    MODIFY datos.
+  ENDLOOP.
+ENDFORM.                    "f_check_material
+
+*&---------------------------------------------------------------------*
+*&      Form  set_status_alv
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->IT_EXTAB   text
+*----------------------------------------------------------------------*
+FORM set_status_alv
+     USING it_extab TYPE slis_t_extab.
+  SET PF-STATUS 'ST_ALV'.
+ENDFORM.                    "set_status_alv
+
+*----------------------------------------------------------------------*
+* USER_COMMAND: Tratar el código de función del formato ALV            *
+*----------------------------------------------------------------------*
+FORM user_command
+  USING r_ucomm     LIKE sy-ucomm
+        rs_selfield TYPE slis_selfield.
+  CASE r_ucomm.
+    WHEN 'EJEC'.
+      DATA: p_resp TYPE c.
+      CLEAR p_resp.
+
+      DATA: d_textquestion(400) TYPE c.
+      IF d_error = 'X'.
+        CONCATENATE TEXT-m02 TEXT-m01 INTO d_textquestion SEPARATED BY space.
+      ELSE.
+        MOVE TEXT-m01 TO d_textquestion.
+      ENDIF.
+      CALL FUNCTION 'POPUP_TO_CONFIRM'
+        EXPORTING
+          titlebar              = TEXT-t01
+*         DIAGNOSE_OBJECT       = ' '
+          text_question         = d_textquestion
+*         TEXT_BUTTON_1         = 'Ja'(001)
+*         ICON_BUTTON_1         = ' '
+*         TEXT_BUTTON_2         = 'Nein'(002)
+*         ICON_BUTTON_2         = ' '
+*         default_button        = '2'
+          display_cancel_button = ''
+*         USERDEFINED_F1_HELP   = ' '
+          start_column          = 20
+          start_row             = 5
+*         POPUP_TYPE            =
+        IMPORTING
+          answer                = p_resp
+* TABLES
+*         PARAMETER             =
+* EXCEPTIONS
+*         TEXT_NOT_FOUND        = 1
+*         OTHERS                = 2
+        .
+      IF p_resp = '1'.
+        LEAVE TO LIST-PROCESSING AND RETURN TO SCREEN 0.
+        SET PF-STATUS 'MI20'.
+        SUPPRESS DIALOG.
+        PERFORM f_create_document.
+        PERFORM f_end_of_selection.
+      ENDIF.
+  ENDCASE.
+ENDFORM.                    "user_command
+
+*&---------------------------------------------------------------------*
+*&      Form  f_end_of_selection
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM f_end_of_selection.
+  DATA: sw_err(1) TYPE c.
+
+* Listado con los documentos de inventario creados
+  FORMAT COLOR 2.
+  WRITE:/50 TEXT-400.
+  FORMAT COLOR OFF.
+  ULINE.
+  FORMAT COLOR 4.
+  WRITE:/4 TEXT-403,
+          28 TEXT-202,
+          39 TEXT-402.
+  FORMAT COLOR OFF.
+  ULINE.
+
+* Borramos las lineas para la cual la trans MI09 ha fallado
+  DELETE i_doc_inven WHERE cod IS INITIAL.
+
+  LOOP AT i_doc_inven.
+
+
+    WRITE:/   i_doc_inven-marca AS CHECKBOX,
+               10 i_doc_inven-cod,
+               30 i_doc_inven-werks,
+               40 i_doc_inven-p_fechac.
+
+*           40 i_doc_inven-p_fechac(2),
+*           42 '.',
+*           43 i_doc_inven-p_fechac+2(2),
+*           45 '.',
+*           46 i_doc_inven-p_fechac+4(4).
+
+
+  ENDLOOP.
+
+  SKIP.
+  SKIP.
+  FORMAT COLOR 2.
+  WRITE:/50 TEXT-404.
+  FORMAT COLOR OFF.
+  ULINE.
+* Listado con los errores
+  LOOP AT error_datos WHERE err = 'E'.
+* Cabecera de los errores.
+    IF sw_err IS INITIAL.
+
+      FORMAT COLOR 4.
+
+*      WRITE:/ text-200,
+*              20 text-201,
+*              30 text-202,
+*              36 text-203,
+*              54 text-204.
+      WRITE:/ TEXT-200,
+           20 TEXT-201,
+           30 TEXT-202,
+           36 TEXT-205,
+           48 TEXT-203,
+           66 TEXT-204.
+      FORMAT COLOR OFF.
+      ULINE.
+*
+*      WRITE:/ error_datos-matnr,
+*                  20 error_datos-lgort,
+*                  30 error_datos-werks,
+*                  36 error_datos-stock.
+*      FORMAT COLOR 6.
+*      WRITE: 54 error_datos-texto.
+      WRITE:/ error_datos-matnr,
+                 20 error_datos-lgort,
+                 30 error_datos-werks,
+                 36 error_datos-charg,
+                 48 error_datos-stock.
+      FORMAT COLOR 6.
+      WRITE: 66 error_datos-texto.
+      FORMAT COLOR OFF.
+      sw_err = 'X'.
+    ELSE.
+*      WRITE:/ error_datos-matnr,
+*              20 error_datos-lgort,
+*              30 error_datos-werks,
+*              36 error_datos-stock.
+*      FORMAT COLOR 6.
+*      WRITE: 54 error_datos-texto.
+*      FORMAT COLOR OFF.
+      WRITE:/ error_datos-matnr,
+              20 error_datos-lgort,
+              30 error_datos-werks,
+              36 error_datos-charg,
+              48 error_datos-stock.
+      FORMAT COLOR 6.
+      WRITE: 66 error_datos-texto.
+      FORMAT COLOR OFF.
+    ENDIF.
+  ENDLOOP.
+
+  SKIP 3.
+* Mensajes con el doc. de inventario.
+* Primero los pasamos a la otra tabla
+  LOOP AT error_datos WHERE err NE 'E'.
+    FORMAT COLOR 5.
+    WRITE:/ error_datos-texto.
+    FORMAT COLOR OFF.
+  ENDLOOP.
+ENDFORM.                    "f_end_of_selection
+
+*&---------------------------------------------------------------------*
+*&      Form  f_create_document
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM f_create_document.
+* Rellenamos la tabla bdcdata con los datos para el inventario.
+  PERFORM cabecera.
+
+* Incluimos máximo 300 materiales en cada documento, para ello usamos un
+* contador.
+  CLEAR contador.
+  ADD 1 TO contador.
+  SORT datos BY werks lgort.
+  "Cogemos sólo los registros sin error
+  LOOP AT datos
+    WHERE error <> 'X'.
+
+*    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
+*      EXPORTING
+*        input  = datos-charg
+*      IMPORTING
+*        output = datos-char
+
+
+* ABG Inc 118802 quitamos la conversión para que no meta los ceros delante dependiento dle parámetro de selección 30.10.2018
+    IF p_charg IS INITIAL.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          input  = datos-charg
+        IMPORTING
+          output = datos-charg.
+    ENDIF.
+* ABG Fin 118802 30.10.2018
+
+
+
+    IF contador GT '300'.
+*      Grabamos el documento anterior.
+      PERFORM grabar_documento.
+
+      CLEAR bdcdata.
+      REFRESH bdcdata.
+
+*      Generamos uno nuevo.
+      PERFORM cabecera.
+
+*      Primera posición
+      PERFORM anadir_posicion.
+
+      CLEAR contador.
+      ADD 1 TO contador.
+    ELSE.
+      PERFORM anadir_posicion.
+      ADD 1 TO contador.
+    ENDIF.
+    AT END OF lgort.
+*      Grabamos el documento anterior.
+      PERFORM grabar_documento.
+
+      CLEAR bdcdata.
+      REFRESH bdcdata.
+
+*      Generamos uno nuevo.
+      PERFORM cabecera.
+    ENDAT.
+  ENDLOOP.
+
+** Grabamos el último documento
+*  PERFORM grabar_documento.
+ENDFORM.                    "f_create_document
+*End Mod Javi Arce.Dic10.SDR542
+
+
+*---------------------------------------------------------------------*
+* Start of Modification
+* Developer : Tushar Pawar
+* Date      : 09.07.2026
+* Purpose   : Download Excel Template
+*---------------------------------------------------------------------*
+FORM download_template.
+
+  DATA: lt_template TYPE STANDARD TABLE OF string,
+        lv_line     TYPE string,
+        lv_filename TYPE string,
+        lv_path     TYPE string,
+        lv_fullpath TYPE string,
+        lv_rc       TYPE i.
+
+* Header Row
+  CONCATENATE
+      'Material'
+      'Storage'
+      'Plant'
+      'Qty.'
+      'Stock type'
+      'UM'
+*      'Reason'
+      'Batch'
+  INTO lv_line
+  SEPARATED BY cl_abap_char_utilities=>horizontal_tab.
+
+  APPEND lv_line TO lt_template.
+
+* Save Dialog
+  CALL METHOD cl_gui_frontend_services=>file_save_dialog
+    EXPORTING
+      default_extension = 'xls'
+      default_file_name = 'Inventory_Template.xls'
+      file_filter       = 'Excel Files (*.xls)|*.xls|'
+    CHANGING
+      filename          = lv_filename
+      path              = lv_path
+      fullpath          = lv_fullpath
+      user_action       = lv_rc.
+
+  IF lv_rc <> cl_gui_frontend_services=>action_ok.
+    RETURN.
+  ENDIF.
+
+* Download File
+  CALL FUNCTION 'GUI_DOWNLOAD'
+    EXPORTING
+      filename = lv_fullpath
+      filetype = 'ASC'
+    TABLES
+      data_tab = lt_template
+    EXCEPTIONS
+      OTHERS   = 1.
+
+  IF sy-subrc = 0.
+    MESSAGE 'Excel template downloaded successfully.' TYPE 'S'.
+  ELSE.
+    MESSAGE 'Error while downloading template.' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
+*---------------------------------------------------------------------*
+* End of Modification
+*---------------------------------------------------------------------*
