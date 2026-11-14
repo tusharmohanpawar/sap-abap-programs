@@ -1,0 +1,650 @@
+*&=====================================================================*
+*& PROGRAM 1 : ZMM_SCHEDULING_AGGR_BDC
+*&=====================================================================*
+*&---------------------------------------------------------------------*
+*& Report ZMM_SCHEDULING_AGGR_BDC
+*&---------------------------------------------------------------------*
+**********************************************************************
+* PROGRAM TITLE : ZMM_SCHEDULING_AGGR_BDC
+* MODULE        : MM
+* PROGRAM TYPE  : Create Scheduling Agreement
+* CREATED BY    : Awais Syed+tushar pawar
+* FUNCTIONAL    : Kalpesh Sawant
+* DESCRIPTION   : Upload program for Scheduling Agreement Creation
+* TCODE         : ZME31L
+************************************************************************
+REPORT zmm_scheduling_aggr_bdc
+       NO STANDARD PAGE HEADING LINE-SIZE 255.
+TABLES: sscrfields.
+TYPE-POOLS: truxs, icon.
+
+*--- Excel column order MUST match the template program
+TYPES : BEGIN OF ty_final,
+*--- Header List
+          lifnr  TYPE string,   " Vendor
+          evart  TYPE string,   " Agreement Type
+          evrtn  TYPE string,   " Agreement Number (external)
+          ekorg  TYPE string,   " Purchasing Org
+          bukrs  TYPE string,   " Company Code (popup 0514)
+          ekgrp  TYPE string,   " Purchasing Group
+          pincr  TYPE string,   " Item Interval
+          upinc  TYPE string,   " Subitem Interval
+          kdatb  TYPE string,   " Validity Start
+          kdate  TYPE string,   " Validity End
+          spras  TYPE string,   " Language
+          zterm  TYPE string,   " Payment Terms
+          waers  TYPE string,   " Currency
+          wkurs  TYPE string,   " Exchange Rate
+          inco1  TYPE string,   " Incoterms
+          inco2  TYPE string,   " Incoterms Location
+          plifz  TYPE string,   " Planned Delivery Time
+*--- Item List
+          evrtp  TYPE string,   " Item Number
+          ematn  TYPE string,   " Material
+          ktmng  TYPE string,   " Target Quantity
+          meins  TYPE string,   " Order Unit
+          netpr  TYPE string,   " Net Price
+          peinh  TYPE string,   " Price Unit
+          bprme  TYPE string,   " Order Price Unit
+          matkl  TYPE string,   " Material Group
+          werks  TYPE string,   " Plant
+          lgort  TYPE string,   " Storage Location
+        END OF ty_final.
+TYPES : ty_t_final TYPE STANDARD TABLE OF ty_final WITH DEFAULT KEY.
+
+*--- ALV log structure
+TYPES : BEGIN OF ty_log,
+          status TYPE icon_d,
+          msgtyp TYPE c LENGTH 1,
+          lifnr  TYPE c LENGTH 10,
+          evart  TYPE c LENGTH 4,
+          evrtn  TYPE c LENGTH 10,
+          items  TYPE i,
+          text   TYPE c LENGTH 200,
+          color  TYPE lvc_t_scol,
+        END OF ty_log.
+
+*--- F4 value list for processing mode
+TYPES : BEGIN OF ty_mode,
+          modeval TYPE c LENGTH 1,
+          modetxt TYPE c LENGTH 40,
+        END OF ty_mode.
+
+*--- How the next item is positioned on item screen 0220
+*--- 'X' : 1st screen  -> put previous item in the bottom "Item" field
+*---                      (RM06E-EBELP) + Enter, so previous item moves
+*---                      to the top row of the grid
+*---       2nd screen  -> new item is typed in row (02)
+*--- ' ' : both in ONE screen (exactly like the SAP recording)
+CONSTANTS : gc_two_step TYPE c LENGTH 1 VALUE 'X'.
+
+DATA : it_final TYPE ty_t_final,
+       wa_final TYPE ty_final.
+DATA : it_item  TYPE ty_t_final,
+       wa_item  TYPE ty_final.
+
+DATA : lt_filtered TYPE ty_t_final.
+
+DATA : bdcdata TYPE bdcdata OCCURS 0 WITH HEADER LINE.
+DATA : text TYPE truxs_t_text_data.
+DATA : gt_messtab TYPE TABLE OF bdcmsgcoll,
+       gs_messtab TYPE bdcmsgcoll.
+DATA : gt_log TYPE STANDARD TABLE OF ty_log,
+       gs_log TYPE ty_log.
+DATA : lv_itemno(2) TYPE n,
+       lv_fname(30) TYPE c,
+       gv_mode      TYPE ctu_params-dismode.
+
+*--- Options for CALL TRANSACTION (fixed screen size = same result
+*--- in foreground, error and background mode)
+DATA : gs_opt TYPE ctu_params.
+
+*--- Remembers whether SAP showed the company code popup (0514)
+*--- the last time the header screens passed successfully
+DATA : gv_popup_last  TYPE c LENGTH 1,
+       gv_popup_known TYPE c LENGTH 1.
+
+DATA : go_alv     TYPE REF TO cl_salv_table,
+       go_alv_col TYPE REF TO cl_salv_columns_table,
+       go_alv_c   TYPE REF TO cl_salv_column.
+
+*--- Selection screen
+SELECTION-SCREEN : BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+  PARAMETERS : p_file TYPE rlgrap-filename,
+               p_mode TYPE c LENGTH 1 DEFAULT 'N'.
+SELECTION-SCREEN : END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF LINE.
+  SELECTION-SCREEN PUSHBUTTON (25) w_button USER-COMMAND but1.
+SELECTION-SCREEN END OF LINE.
+
+INITIALIZATION.
+  w_button = 'Download Excel Template'(002).
+  %_p_file_%_app_%-text = 'Excel File'.
+  %_p_mode_%_app_%-text = 'Processing Mode (F4)'.
+
+AT SELECTION-SCREEN.
+  IF sscrfields-ucomm EQ 'BUT1'.
+    SUBMIT zmm_scheduling_aggr_template VIA SELECTION-SCREEN.
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  CALL FUNCTION 'F4_FILENAME'
+    IMPORTING
+      file_name = p_file.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_mode.
+  PERFORM f4_mode.
+
+START-OF-SELECTION.
+  IF p_file IS INITIAL.
+    MESSAGE 'Please Enter upload file'(003) TYPE 'S' DISPLAY LIKE 'E'.
+    RETURN.
+  ENDIF.
+
+*--- Mode from selection screen (A / E / N)
+  IF p_mode <> 'A' AND p_mode <> 'E' AND p_mode <> 'N'.
+    MESSAGE 'Invalid mode. Use F4: A, E or N' TYPE 'S' DISPLAY LIKE 'E'.
+    RETURN.
+  ENDIF.
+  gv_mode = p_mode.
+
+*--- Call transaction options
+  CLEAR gs_opt.
+  gs_opt-dismode = gv_mode.
+  gs_opt-updmode = 'S'.     " synchronous update
+  gs_opt-defsize = 'X'.     " standard screen size
+
+  REFRESH : it_item, it_final, gt_log.
+  CLEAR : gv_popup_last, gv_popup_known.
+  CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
+    EXPORTING
+      i_line_header        = 'X'
+      i_tab_raw_data       = text
+      i_filename           = p_file
+    TABLES
+      i_tab_converted_data = it_final
+    EXCEPTIONS
+      conversion_failed    = 1
+      OTHERS               = 2.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE 'S' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4
+            DISPLAY LIKE 'E'.
+    RETURN.
+  ENDIF.
+
+  it_item[] = it_final[].
+
+*--- One header per unique header combination
+  SORT it_final BY lifnr evart evrtn ekorg bukrs ekgrp pincr upinc
+                   kdatb kdate spras zterm waers wkurs inco1 inco2 plifz.
+  DELETE ADJACENT DUPLICATES FROM it_final
+         COMPARING lifnr evart evrtn ekorg bukrs ekgrp pincr upinc
+                   kdatb kdate spras zterm waers wkurs inco1 inco2 plifz.
+
+  LOOP AT it_final INTO wa_final.
+
+    " Collect ALL items belonging to this header (Excel order kept)
+    CLEAR lt_filtered.
+    LOOP AT it_item INTO wa_item
+         WHERE lifnr = wa_final-lifnr
+           AND evart = wa_final-evart
+           AND evrtn = wa_final-evrtn
+           AND ekorg = wa_final-ekorg
+           AND bukrs = wa_final-bukrs
+           AND ekgrp = wa_final-ekgrp
+           AND pincr = wa_final-pincr
+           AND upinc = wa_final-upinc
+           AND kdatb = wa_final-kdatb
+           AND kdate = wa_final-kdate
+           AND spras = wa_final-spras
+           AND zterm = wa_final-zterm
+           AND waers = wa_final-waers
+           AND wkurs = wa_final-wkurs
+           AND inco1 = wa_final-inco1
+           AND inco2 = wa_final-inco2
+           AND plifz = wa_final-plifz.
+      APPEND wa_item TO lt_filtered.
+    ENDLOOP.
+
+    " One BDC call = one scheduling agreement with all its items
+    PERFORM process_bdc USING wa_final lt_filtered.
+
+  ENDLOOP.
+
+*--- Show ALV log
+  PERFORM display_alv.
+
+*&---------------------------------------------------------------------*
+*&      Form  f4_mode
+*&---------------------------------------------------------------------*
+FORM f4_mode.
+  DATA : lt_mode TYPE STANDARD TABLE OF ty_mode,
+         ls_mode TYPE ty_mode,
+         lt_ret  TYPE STANDARD TABLE OF ddshretval,
+         ls_ret  TYPE ddshretval.
+
+  ls_mode-modeval = 'A'.
+  ls_mode-modetxt = 'Display all screens'.
+  APPEND ls_mode TO lt_mode.
+  ls_mode-modeval = 'E'.
+  ls_mode-modetxt = 'Display errors only'.
+  APPEND ls_mode TO lt_mode.
+  ls_mode-modeval = 'N'.
+  ls_mode-modetxt = 'Background (no display)'.
+  APPEND ls_mode TO lt_mode.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'MODEVAL'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_MODE'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_mode
+      return_tab      = lt_ret
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+  IF sy-subrc = 0.
+    READ TABLE lt_ret INTO ls_ret INDEX 1.
+    IF sy-subrc = 0.
+      p_mode = ls_ret-fieldval.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  bdc_dynpro
+*&---------------------------------------------------------------------*
+FORM bdc_dynpro USING program TYPE bdcdata-program
+                      dynpro  TYPE bdcdata-dynpro.
+  CLEAR bdcdata.
+  bdcdata-program  = program.
+  bdcdata-dynpro   = dynpro.
+  bdcdata-dynbegin = 'X'.
+  APPEND bdcdata.
+ENDFORM.                    "BDC_DYNPRO
+*&---------------------------------------------------------------------*
+*&      Form  bdc_field
+*&---------------------------------------------------------------------*
+FORM bdc_field USING fnam fval.
+  CLEAR bdcdata.
+  IF fval <> space.
+    bdcdata-fnam = fnam.
+    bdcdata-fval = fval.
+    APPEND bdcdata.
+  ENDIF.
+ENDFORM.                    "bdc_field
+*&---------------------------------------------------------------------*
+*&      Form  item_field  (builds FIELDNAME(nn) and adds it)
+*&---------------------------------------------------------------------*
+FORM item_field USING iv_name TYPE clike
+                      iv_idx  TYPE n
+                      iv_val  TYPE string.
+  CLEAR lv_fname.
+  CONCATENATE iv_name '(' iv_idx ')' INTO lv_fname.
+  PERFORM bdc_field USING lv_fname iv_val.
+ENDFORM.
+
+FORM build_bdc USING ps_hdr   TYPE ty_final
+                     pt_items TYPE ty_t_final
+                     iv_popup TYPE c.
+  DATA : ls_item   TYPE ty_final,
+         lv_subscr TYPE c LENGTH 60,
+         lv_date   TYPE c LENGTH 10,
+         lv_seq    TYPE i,
+         lv_inc    TYPE n LENGTH 5,
+         lv_num    TYPE n LENGTH 5,
+         lv_num_c  TYPE string,
+         lv_prev_c TYPE string.
+
+  CLEAR : bdcdata, bdcdata[].
+
+*--- Screen 0200 : Initial screen
+  CONCATENATE sy-datum+6(2) sy-datum+4(2) sy-datum+0(4)
+              INTO lv_date SEPARATED BY '.'.
+
+  PERFORM bdc_dynpro USING 'SAPMM06E' '0200'.
+  PERFORM bdc_field  USING 'BDC_CURSOR'  'EKKO-EKGRP'.
+  PERFORM bdc_field  USING 'BDC_OKCODE'  '/00'.
+  PERFORM bdc_field  USING 'EKKO-LIFNR'  ps_hdr-lifnr.
+  PERFORM bdc_field  USING 'RM06E-EVART' ps_hdr-evart.
+  PERFORM bdc_field  USING 'RM06E-VEDAT' lv_date.
+  PERFORM bdc_field  USING 'RM06E-EVRTN' ps_hdr-evrtn.
+  PERFORM bdc_field  USING 'EKKO-EKORG'  ps_hdr-ekorg.
+  PERFORM bdc_field  USING 'EKKO-EKGRP'  ps_hdr-ekgrp.
+
+*--- Screen 0514 : Company code popup (only when SAP shows it)
+  IF iv_popup = 'X'.
+    PERFORM bdc_dynpro USING 'SAPMM06E' '0514'.
+    PERFORM bdc_field  USING 'BDC_OKCODE' '=ENTE'.
+    PERFORM bdc_field  USING 'EKKO-BUKRS' ps_hdr-bukrs.
+  ENDIF.
+
+*--- Screen 0201 : Header data
+  PERFORM bdc_dynpro USING 'SAPMM06E' '0201'.
+  PERFORM bdc_field  USING 'BDC_CURSOR' 'EKKO-KDATE'.
+  PERFORM bdc_field  USING 'BDC_OKCODE' '/00'.
+  PERFORM bdc_field  USING 'EKKO-EKGRP' ps_hdr-ekgrp.
+  PERFORM bdc_field  USING 'EKKO-PINCR' ps_hdr-pincr.
+  PERFORM bdc_field  USING 'EKKO-UPINC' ps_hdr-upinc.
+  PERFORM bdc_field  USING 'EKKO-KDATB' ps_hdr-kdatb.
+  PERFORM bdc_field  USING 'EKKO-KDATE' ps_hdr-kdate.
+  PERFORM bdc_field  USING 'EKKO-SPRAS' ps_hdr-spras.
+  PERFORM bdc_field  USING 'EKKO-ZTERM' ps_hdr-zterm.
+  PERFORM bdc_field  USING 'EKKO-WAERS' ps_hdr-waers.
+  PERFORM bdc_field  USING 'EKKO-WKURS' ps_hdr-wkurs.
+  PERFORM bdc_field  USING 'MMPUR_INCOTERMS_CONTRACT-INCO1'   ps_hdr-inco1.
+  PERFORM bdc_field  USING 'MMPUR_INCOTERMS_CONTRACT-INCO2_L' ps_hdr-inco2.
+  IF ps_hdr-plifz IS NOT INITIAL.
+    CLEAR lv_subscr.
+    lv_subscr(40)    = 'SAPLXM06'.
+    lv_subscr+40(12) = '0211CUSTSCR1'.
+    PERFORM bdc_field USING 'BDC_SUBSCR'    lv_subscr.
+    PERFORM bdc_field USING 'GD_EKPO_PLIFZ' ps_hdr-plifz.
+  ENDIF.
+
+  IF ps_hdr-pincr IS INITIAL.
+    lv_inc = 10.
+  ELSE.
+    lv_inc = ps_hdr-pincr.
+    IF lv_inc IS INITIAL.
+      lv_inc = 10.
+    ENDIF.
+  ENDIF.
+
+  CLEAR : lv_seq, lv_prev_c.
+  LOOP AT pt_items INTO ls_item.
+    lv_seq = lv_seq + 1.
+
+*   Item number : from Excel, otherwise calculated from the interval
+    IF ls_item-evrtp IS NOT INITIAL.
+      lv_num = ls_item-evrtp.
+    ELSE.
+      lv_num = lv_seq * lv_inc.
+    ENDIF.
+    lv_num_c = lv_num.
+
+    IF lv_seq = 1.
+      lv_itemno = '01'.
+    ELSE.
+      lv_itemno = '02'.
+      IF gc_two_step = 'X'.
+*       Screen A : only position the grid on the previous item
+        PERFORM bdc_dynpro USING 'SAPMM06E' '0220'.
+        PERFORM bdc_field  USING 'BDC_CURSOR' 'RM06E-EBELP'.
+        PERFORM bdc_field  USING 'BDC_OKCODE' '/00'.
+        PERFORM bdc_field  USING 'RM06E-EBELP' lv_prev_c.
+      ENDIF.
+    ENDIF.
+
+*   Screen B : enter the item data
+    PERFORM bdc_dynpro USING 'SAPMM06E' '0220'.
+    PERFORM bdc_field  USING 'BDC_OKCODE' '/00'.
+    IF lv_seq > 1 AND gc_two_step <> 'X'.
+      PERFORM bdc_field USING 'RM06E-EBELP' lv_prev_c.
+    ENDIF.
+    PERFORM item_field USING 'RM06E-EVRTP' lv_itemno lv_num_c.
+    PERFORM item_field USING 'EKPO-EMATN'  lv_itemno ls_item-ematn.
+    PERFORM item_field USING 'EKPO-KTMNG'  lv_itemno ls_item-ktmng.
+    PERFORM item_field USING 'EKPO-MEINS'  lv_itemno ls_item-meins.
+    PERFORM item_field USING 'EKPO-NETPR'  lv_itemno ls_item-netpr.
+    PERFORM item_field USING 'EKPO-PEINH'  lv_itemno ls_item-peinh.
+    PERFORM item_field USING 'EKPO-BPRME'  lv_itemno ls_item-bprme.
+    PERFORM item_field USING 'EKPO-MATKL'  lv_itemno ls_item-matkl.
+    PERFORM item_field USING 'EKPO-WERKS'  lv_itemno ls_item-werks.
+    PERFORM item_field USING 'EKPO-LGORT'  lv_itemno ls_item-lgort.
+
+    lv_prev_c = lv_num_c.
+  ENDLOOP.
+
+*--- Save
+  PERFORM bdc_dynpro USING 'SAPMM06E' '0220'.
+  PERFORM bdc_field  USING 'BDC_OKCODE' '=BU'.
+
+*--- Confirmation popup
+  PERFORM bdc_dynpro USING 'SAPLSPO1' '0300'.
+  PERFORM bdc_field  USING 'BDC_OKCODE' '=YES'.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form process_bdc
+*&---------------------------------------------------------------------*
+FORM process_bdc USING ps_hdr   TYPE ty_final
+                       pt_items TYPE ty_t_final.
+  DATA : lv_msg    TYPE c LENGTH 200,
+         lv_cnt    TYPE i,
+         lv_found  TYPE c LENGTH 1,
+         lv_err    TYPE c LENGTH 1,
+         lv_iserr  TYPE c LENGTH 1,
+         lv_type   TYPE c LENGTH 1,
+         lv_popup  TYPE c LENGTH 1,
+         lv_retry  TYPE c LENGTH 1,
+         lv_has344 TYPE c LENGTH 1,
+         lv_try    TYPE i.
+
+  lv_cnt = lines( pt_items ).
+
+*--- Validation : Purchasing Org
+  IF ps_hdr-ekorg IS INITIAL.
+    PERFORM add_log USING 'E' 'Purchasing Org is mandatory'
+                          ps_hdr lv_cnt.
+    RETURN.
+  ENDIF.
+
+*--- First guess for the company code popup (0514):
+*--- use what worked last time, otherwise send it if Excel has a code
+  IF gv_popup_known = 'X'.
+    lv_popup = gv_popup_last.
+  ELSEIF ps_hdr-bukrs IS NOT INITIAL.
+    lv_popup = 'X'.
+  ELSE.
+    CLEAR lv_popup.
+  ENDIF.
+  IF lv_popup = 'X' AND ps_hdr-bukrs IS INITIAL.
+    CLEAR lv_popup.
+  ENDIF.
+
+*--- Try, and if SAP complains about screen 0514, flip and retry once.
+*--- A failed attempt saves nothing, so the retry is safe.
+  CLEAR lv_try.
+  DO 2 TIMES.
+    lv_try = lv_try + 1.
+
+    CLEAR : gt_messtab, gt_messtab[].
+    PERFORM build_bdc USING ps_hdr pt_items lv_popup.
+
+    CALL TRANSACTION 'ME31L' USING bdcdata
+                             OPTIONS FROM gs_opt
+                             MESSAGES INTO gt_messtab.
+
+    CLEAR lv_retry.
+    IF lv_try = 1.
+      LOOP AT gt_messtab INTO gs_messtab
+           WHERE msgid = '00' AND msgnr = '344'.
+        " Does the screen-mismatch message mention 0514 anywhere?
+        IF gs_messtab-msgv1 = '0514' OR gs_messtab-msgv2 = '0514'
+           OR gs_messtab-msgv3 = '0514' OR gs_messtab-msgv4 = '0514'.
+          IF lv_popup = 'X'.
+            " We sent the popup but SAP did not show it
+            CLEAR lv_popup.
+            lv_retry = 'X'.
+          ELSEIF ps_hdr-bukrs IS NOT INITIAL.
+            " SAP shows the popup but we did not send it
+            lv_popup = 'X'.
+            lv_retry = 'X'.
+          ELSE.
+            PERFORM add_log USING 'E'
+              'SAP asks for Company Code (popup 0514) - fill Company Code in Excel'
+              ps_hdr lv_cnt.
+            CLEAR : bdcdata, bdcdata[].
+            RETURN.
+          ENDIF.
+        ENDIF.
+        EXIT.   " only the first 344 message is checked
+      ENDLOOP.
+    ENDIF.
+
+    IF lv_retry IS INITIAL.
+      EXIT.     " leave DO loop
+    ENDIF.
+  ENDDO.
+
+*--- Remember the popup setting if the header screens passed
+  CLEAR lv_has344.
+  LOOP AT gt_messtab INTO gs_messtab
+       WHERE msgid = '00' AND msgnr = '344'.
+    lv_has344 = 'X'.
+    EXIT.
+  ENDLOOP.
+  IF lv_has344 IS INITIAL.
+    gv_popup_last  = lv_popup.
+    gv_popup_known = 'X'.
+  ENDIF.
+
+*--- Pass 1 : did this call produce any error?
+*--- (message 00 344 'No batch input data found' is also an error)
+  CLEAR lv_err.
+  LOOP AT gt_messtab INTO gs_messtab.
+    IF gs_messtab-msgtyp = 'E' OR gs_messtab-msgtyp = 'A'
+       OR ( gs_messtab-msgid = '00' AND gs_messtab-msgnr = '344' ).
+      lv_err = 'X'.
+      EXIT.
+    ENDIF.
+  ENDLOOP.
+
+*--- Pass 2 : log errors only, or success messages only
+  CLEAR lv_found.
+  LOOP AT gt_messtab INTO gs_messtab.
+    CLEAR lv_iserr.
+    IF gs_messtab-msgtyp = 'E' OR gs_messtab-msgtyp = 'A'
+       OR ( gs_messtab-msgid = '00' AND gs_messtab-msgnr = '344' ).
+      lv_iserr = 'X'.
+    ENDIF.
+
+    IF lv_err = 'X'.
+      CHECK lv_iserr = 'X'.
+    ELSE.
+      CHECK gs_messtab-msgtyp = 'S'.
+    ENDIF.
+
+    lv_found = 'X'.
+    CLEAR lv_msg.
+    CALL FUNCTION 'FORMAT_MESSAGE'
+      EXPORTING
+        id        = gs_messtab-msgid
+        lang      = sy-langu
+        no        = gs_messtab-msgnr
+        v1        = gs_messtab-msgv1
+        v2        = gs_messtab-msgv2
+        v3        = gs_messtab-msgv3
+        v4        = gs_messtab-msgv4
+      IMPORTING
+        msg       = lv_msg
+      EXCEPTIONS
+        not_found = 1
+        OTHERS    = 2.
+    IF sy-subrc <> 0.
+      lv_msg = 'Message could not be formatted'.
+    ENDIF.
+
+    IF lv_iserr = 'X'.
+      lv_type = 'E'.
+    ELSE.
+      lv_type = 'S'.
+    ENDIF.
+    PERFORM add_log USING lv_type lv_msg ps_hdr lv_cnt.
+  ENDLOOP.
+
+  IF lv_found IS INITIAL.
+    PERFORM add_log USING 'E'
+            'No message returned - agreement may not be created'
+            ps_hdr lv_cnt.
+  ENDIF.
+
+  CLEAR : bdcdata, bdcdata[].
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  add_log
+*&---------------------------------------------------------------------*
+FORM add_log USING iv_type  TYPE clike
+                   iv_text  TYPE clike
+                   ps_hdr   TYPE ty_final
+                   iv_items TYPE i.
+  DATA ls_color TYPE lvc_s_scol.
+
+  CLEAR gs_log.
+  gs_log-msgtyp = iv_type.
+  gs_log-lifnr  = ps_hdr-lifnr.
+  gs_log-evart  = ps_hdr-evart.
+  gs_log-evrtn  = ps_hdr-evrtn.
+  gs_log-items  = iv_items.
+  gs_log-text   = iv_text.
+
+  CLEAR ls_color.
+  ls_color-color-int = 0.
+  ls_color-color-inv = 0.
+  IF iv_type = 'S'.
+    gs_log-status      = icon_green_light.
+    ls_color-color-col = 5.    " Green
+  ELSE.
+    gs_log-status      = icon_red_light.
+    ls_color-color-col = 6.    " Red
+  ENDIF.
+  APPEND ls_color TO gs_log-color.
+
+  APPEND gs_log TO gt_log.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  display_alv
+*&---------------------------------------------------------------------*
+FORM display_alv.
+  IF gt_log IS INITIAL.
+    MESSAGE 'No data processed' TYPE 'S' DISPLAY LIKE 'E'.
+    RETURN.
+  ENDIF.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING r_salv_table = go_alv
+        CHANGING  t_table      = gt_log ).
+
+      go_alv->get_functions( )->set_all( abap_true ).
+      go_alv->get_display_settings( )->set_list_header(
+                                'Scheduling Agreement Upload Log' ).
+      go_alv->get_display_settings( )->set_striped_pattern( abap_false ).
+
+      go_alv_col = go_alv->get_columns( ).
+      go_alv_col->set_optimize( abap_true ).
+      go_alv_col->set_color_column( 'COLOR' ).
+
+      PERFORM set_alv_col USING 'STATUS' 'Status'.
+      PERFORM set_alv_col USING 'MSGTYP' 'Type'.
+      PERFORM set_alv_col USING 'LIFNR'  'Vendor'.
+      PERFORM set_alv_col USING 'EVART'  'Agr. Type'.
+      PERFORM set_alv_col USING 'EVRTN'  'Agr. Number'.
+      PERFORM set_alv_col USING 'ITEMS'  'No. of Items'.
+      PERFORM set_alv_col USING 'TEXT'   'Message'.
+
+      go_alv->display( ).
+    CATCH cx_salv_msg cx_salv_not_found cx_salv_data_error.
+      MESSAGE 'Error while displaying ALV' TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  set_alv_col
+*&---------------------------------------------------------------------*
+FORM set_alv_col USING iv_field TYPE lvc_fname
+                       iv_text  TYPE string.
+  DATA lv_text TYPE scrtext_l.
+  lv_text = iv_text.
+  TRY.
+      go_alv_c = go_alv_col->get_column( iv_field ).
+      go_alv_c->set_long_text( lv_text ).
+      go_alv_c->set_medium_text( CONV #( lv_text ) ).
+      go_alv_c->set_short_text( CONV #( lv_text ) ).
+    CATCH cx_salv_not_found.
+  ENDTRY.
+ENDFORM.
