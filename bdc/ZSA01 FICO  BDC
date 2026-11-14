@@ -1,0 +1,474 @@
+*&---------------------------------------------------------------------*
+*& Report ZAS01_BDC_NEW
+*&---------------------------------------------------------------------*
+*& AS01 - Create Asset (Optimized BDC + ALV)
+*&---------------------------------------------------------------------*
+REPORT zas01_bdc_new NO STANDARD PAGE HEADING LINE-SIZE 255.
+
+TYPES: BEGIN OF ty_excel,
+         anlkl   TYPE char10,   " Asset Class
+         bukrs   TYPE char4,    " Company Code
+         nassets TYPE char10,   " Number of Assets
+         txt50   TYPE char50,   " Description
+         kostl   TYPE char10,   " Cost Center
+         werks   TYPE char4,    " Plant
+         aibn1   TYPE char20,   " Inventory Number (Origin)
+         aibn2   TYPE char10,   " Inventory Subnumber (Origin)
+         eaufn   TYPE char12,   " Order (Origin)
+         afasl   TYPE char4,    " Depreciation Key (Dep Area)
+         ndjar   TYPE char10,   " Useful Life (Dep Area)
+       END OF ty_excel.
+
+TYPES: BEGIN OF ty_result,
+         row_no  TYPE i,
+         anlkl   TYPE char10,
+         bukrs   TYPE char4,
+         txt50   TYPE char50,
+         kostl   TYPE char10,
+         werks   TYPE char4,
+         eaufn   TYPE char12,
+         aibn1   TYPE char20,
+         afasl   TYPE char4,
+         status  TYPE char10,
+         message TYPE char255,
+       END OF ty_result.
+
+TYPES: BEGIN OF ty_tmpl,
+         anlkl   TYPE c LENGTH 20,
+         bukrs   TYPE c LENGTH 10,
+         nassets TYPE c LENGTH 10,
+         txt50   TYPE c LENGTH 50,
+         kostl   TYPE c LENGTH 20,
+         werks   TYPE c LENGTH 10,
+         aibn1   TYPE c LENGTH 20,
+         aibn2   TYPE c LENGTH 10,
+         eaufn   TYPE c LENGTH 20,
+         afasl   TYPE c LENGTH 10,
+         ndjar   TYPE c LENGTH 10,
+       END OF ty_tmpl.
+
+DATA:
+  gt_excel  TYPE STANDARD TABLE OF ty_excel,
+  gs_excel  TYPE ty_excel.
+
+DATA:
+  gt_result TYPE STANDARD TABLE OF ty_result,
+  gs_result TYPE ty_result.
+
+DATA:
+  gt_tmpl   TYPE STANDARD TABLE OF ty_tmpl.
+
+DATA:
+  gt_bdcdata TYPE STANDARD TABLE OF bdcdata,
+  gs_bdcdata TYPE bdcdata.
+
+DATA:
+  gt_msg TYPE STANDARD TABLE OF bdcmsgcoll,
+  gs_msg TYPE bdcmsgcoll.
+
+DATA:
+  gv_filename TYPE string,
+  gv_xstring  TYPE xstring.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+PARAMETERS:
+  p_file   TYPE rlgrap-filename,
+  bdc_mode LIKE ctu_params-dismode DEFAULT 'N'.
+SELECTION-SCREEN PUSHBUTTON /1(20) btn_temp USER-COMMAND temp.
+SELECTION-SCREEN END OF BLOCK b1.
+
+INITIALIZATION.
+  btn_temp = 'Download Template'.
+
+AT SELECTION-SCREEN.
+  CASE sy-ucomm.
+    WHEN 'TEMP'.
+      PERFORM download_template.
+  ENDCASE.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  PERFORM get_file.
+
+START-OF-SELECTION.
+  PERFORM upload_excel.
+  IF gt_excel IS INITIAL.
+    MESSAGE 'No valid records found in Excel file' TYPE 'E'.
+  ENDIF.
+  PERFORM process_bdc.
+  PERFORM display_alv.
+
+*---------------------------------------------------------------------*
+* FORM GET_FILE
+*---------------------------------------------------------------------*
+FORM get_file.
+  DATA:
+    lt_file_table TYPE filetable,
+    ls_file_table TYPE file_table,
+    lv_rc         TYPE i,
+    lv_action     TYPE i.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+    EXPORTING
+      window_title            = 'Select AS01 Excel File'
+      default_extension       = 'xlsx'
+      file_filter             = 'Excel Files (*.xlsx)|*.xlsx|'
+    CHANGING
+      file_table              = lt_file_table
+      rc                      = lv_rc
+      user_action             = lv_action
+    EXCEPTIONS
+      file_open_dialog_failed = 1
+      cntl_error              = 2
+      error_no_gui            = 3
+      not_supported_by_gui    = 4
+      OTHERS                  = 5.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Unable to open file selection dialog' TYPE 'E'.
+  ENDIF.
+
+  IF lv_action = cl_gui_frontend_services=>action_ok.
+    READ TABLE lt_file_table INTO ls_file_table INDEX 1.
+    IF sy-subrc = 0.
+      p_file = ls_file_table-filename.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM UPLOAD_EXCEL
+*---------------------------------------------------------------------*
+FORM upload_excel.
+  DATA:
+    lt_bin TYPE solix_tab,
+    lv_len TYPE i.
+
+  DATA:
+    lo_excel      TYPE REF TO cl_fdt_xl_spreadsheet,
+    lo_data       TYPE REF TO data,
+    lt_worksheets TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
+    lv_worksheet  TYPE string.
+
+  FIELD-SYMBOLS:
+    <lt_data> TYPE STANDARD TABLE,
+    <ls_data> TYPE any,
+    <lv_data> TYPE any.
+
+  gv_filename = p_file.
+
+  CALL METHOD cl_gui_frontend_services=>gui_upload
+    EXPORTING
+      filename                = gv_filename
+      filetype                = 'BIN'
+    IMPORTING
+      filelength              = lv_len
+    CHANGING
+      data_tab                = lt_bin
+    EXCEPTIONS
+      OTHERS                  = 17.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Error while uploading Excel file' TYPE 'E'.
+  ENDIF.
+
+  gv_xstring = cl_bcs_convert=>solix_to_xstring( it_solix = lt_bin ).
+
+  TRY.
+      CREATE OBJECT lo_excel
+        EXPORTING
+          document_name = gv_filename
+          xdocument     = gv_xstring.
+    CATCH cx_fdt_excel_core INTO DATA(lx_excel).
+      MESSAGE lx_excel->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+  CLEAR lt_worksheets.
+  CALL METHOD lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names
+    IMPORTING worksheet_names = lt_worksheets.
+
+  READ TABLE lt_worksheets INTO lv_worksheet INDEX 1.
+  IF sy-subrc <> 0.
+    MESSAGE 'Unable to read worksheet' TYPE 'E'.
+  ENDIF.
+
+  TRY.
+      CALL METHOD lo_excel->if_fdt_doc_spreadsheet~get_itab_from_worksheet
+        EXPORTING worksheet_name = lv_worksheet
+        RECEIVING itab           = lo_data.
+    CATCH cx_fdt_excel_core INTO lx_excel.
+      MESSAGE lx_excel->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+  ASSIGN lo_data->* TO <lt_data>.
+  IF sy-subrc <> 0.
+    MESSAGE 'Unable to assign Excel data' TYPE 'E'.
+  ENDIF.
+
+  LOOP AT <lt_data> ASSIGNING <ls_data>.
+    IF sy-tabix = 1. CONTINUE. ENDIF. " Skip header
+
+    CLEAR gs_excel.
+    ASSIGN COMPONENT 1 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-anlkl = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 2 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-bukrs = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 3 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-nassets = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 4 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-txt50 = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 5 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-kostl = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 6 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-werks = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 7 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-aibn1 = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 8 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-aibn2 = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 9 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-eaufn = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 10 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-afasl = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 11 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-ndjar = <lv_data>. ENDIF.
+
+    CONDENSE: gs_excel-anlkl, gs_excel-bukrs, gs_excel-nassets, gs_excel-txt50,
+              gs_excel-kostl, gs_excel-werks, gs_excel-aibn1, gs_excel-aibn2,
+              gs_excel-eaufn, gs_excel-afasl, gs_excel-ndjar.
+
+    TRANSLATE: gs_excel-anlkl TO UPPER CASE,
+               gs_excel-bukrs TO UPPER CASE,
+               gs_excel-kostl TO UPPER CASE,
+               gs_excel-werks TO UPPER CASE,
+               gs_excel-eaufn TO UPPER CASE,
+               gs_excel-afasl TO UPPER CASE.
+
+    IF gs_excel-nassets IS INITIAL. gs_excel-nassets = '1'. ENDIF.
+
+    IF gs_excel-anlkl IS INITIAL AND gs_excel-bukrs IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    APPEND gs_excel TO gt_excel.
+  ENDLOOP.
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* FORM PROCESS_BDC
+*---------------------------------------------------------------------*
+FORM process_bdc.
+  DATA: lv_row    TYPE i,
+        lv_has_t2 TYPE abap_bool,
+        lv_has_t4 TYPE abap_bool,
+        lv_has_t8 TYPE abap_bool.
+
+  LOOP AT gt_excel INTO gs_excel.
+    lv_row = sy-tabix.
+
+    CLEAR: gt_bdcdata, gt_msg, gs_result.
+
+    gs_result-row_no = lv_row.
+    gs_result-anlkl  = gs_excel-anlkl.
+    gs_result-bukrs  = gs_excel-bukrs.
+    gs_result-txt50  = gs_excel-txt50.
+    gs_result-kostl  = gs_excel-kostl.
+    gs_result-werks  = gs_excel-werks.
+    gs_result-eaufn  = gs_excel-eaufn.
+    gs_result-aibn1  = gs_excel-aibn1.
+    gs_result-afasl  = gs_excel-afasl.
+
+    " Check if tabs have data to jump correctly
+    IF gs_excel-kostl IS NOT INITIAL OR gs_excel-werks IS NOT INITIAL.
+      lv_has_t2 = abap_true.
+    ENDIF.
+    IF gs_excel-eaufn IS NOT INITIAL OR gs_excel-aibn1 IS NOT INITIAL.
+      lv_has_t4 = abap_true.
+    ENDIF.
+    IF gs_excel-afasl IS NOT INITIAL OR gs_excel-ndjar IS NOT INITIAL.
+      lv_has_t8 = abap_true.
+    ENDIF.
+
+    " SCREEN 1: 0105 Initial Screen
+    PERFORM bdc_dynpro USING 'SAPLAIST' '0105'.
+    PERFORM bdc_field  USING 'BDC_CURSOR' 'RA02S-NASSETS'.
+    PERFORM bdc_field  USING 'BDC_OKCODE' '/00'.
+    PERFORM bdc_field  USING 'ANLA-ANLKL' gs_excel-anlkl.
+    PERFORM bdc_field  USING 'ANLA-BUKRS' gs_excel-bukrs.
+    PERFORM bdc_field  USING 'RA02S-NASSETS' gs_excel-nassets.
+
+    " SCREEN 2: 1000 General Tab
+    PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
+    PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLA-TXT50'.
+    IF lv_has_t2 = abap_true.       PERFORM bdc_field USING 'BDC_OKCODE' '=TAB02'.
+    ELSEIF lv_has_t4 = abap_true.   PERFORM bdc_field USING 'BDC_OKCODE' '=TAB04'.
+    ELSEIF lv_has_t8 = abap_true.   PERFORM bdc_field USING 'BDC_OKCODE' '=TAB08'.
+    ELSE.                           PERFORM bdc_field USING 'BDC_OKCODE' '=BUCH'.
+    ENDIF.
+    PERFORM bdc_field  USING 'ANLA-TXT50' gs_excel-txt50.
+
+    " SCREEN 3: 1000 Time-Dependent (Tab 2)
+    IF lv_has_t2 = abap_true.
+      PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
+      PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLZ-CAUFN'.
+      IF lv_has_t4 = abap_true.       PERFORM bdc_field USING 'BDC_OKCODE' '=TAB04'.
+      ELSEIF lv_has_t8 = abap_true.   PERFORM bdc_field USING 'BDC_OKCODE' '=TAB08'.
+      ELSE.                           PERFORM bdc_field USING 'BDC_OKCODE' '=BUCH'.
+      ENDIF.
+      PERFORM bdc_field  USING 'ANLZ-KOSTL' gs_excel-kostl.
+      PERFORM bdc_field  USING 'ANLZ-WERKS' gs_excel-werks.
+    ENDIF.
+
+    " SCREEN 4: 1000 Origin (Tab 4)
+    IF lv_has_t4 = abap_true.
+      PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
+      PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLA-EAUFN'.
+      IF lv_has_t8 = abap_true.       PERFORM bdc_field USING 'BDC_OKCODE' '=TAB08'.
+      ELSE.                           PERFORM bdc_field USING 'BDC_OKCODE' '=BUCH'.
+      ENDIF.
+      PERFORM bdc_field  USING 'ANLA-AIBN1' gs_excel-aibn1.
+      PERFORM bdc_field  USING 'ANLA-AIBN2' gs_excel-aibn2.
+      PERFORM bdc_field  USING 'ANLA-EAUFN' gs_excel-eaufn.
+    ENDIF.
+
+    " SCREEN 5: 1000 Dep. Areas (Tab 8)
+    IF lv_has_t8 = abap_true.
+      PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
+      PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLB-AFASL(01)'.
+      PERFORM bdc_field  USING 'BDC_OKCODE' '=BUCH'.
+      PERFORM bdc_field  USING 'ANLB-AFASL(01)' gs_excel-afasl.
+      PERFORM bdc_field  USING 'ANLB-NDJAR(01)' gs_excel-ndjar.
+    ENDIF.
+
+    " EXECUTE BDC
+    CALL TRANSACTION 'AS01'
+      USING gt_bdcdata
+      MODE bdc_mode
+      UPDATE 'S'
+      MESSAGES INTO gt_msg.
+
+    PERFORM get_bdc_message CHANGING gs_result.
+    APPEND gs_result TO gt_result.
+  ENDLOOP.
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* BDC helper forms & Message & ALV Forms (Standard Template)
+*---------------------------------------------------------------------*
+FORM bdc_dynpro USING p_program TYPE bdcdata-program p_dynpro TYPE bdcdata-dynpro.
+  CLEAR gs_bdcdata.
+  gs_bdcdata-program  = p_program.
+  gs_bdcdata-dynpro   = p_dynpro.
+  gs_bdcdata-dynbegin = 'X'.
+  APPEND gs_bdcdata TO gt_bdcdata.
+ENDFORM.
+
+FORM bdc_field USING p_fnam TYPE bdcdata-fnam p_fval TYPE any.
+  CLEAR gs_bdcdata.
+  gs_bdcdata-fnam = p_fnam.
+  gs_bdcdata-fval = p_fval.
+  APPEND gs_bdcdata TO gt_bdcdata.
+ENDFORM.
+
+FORM get_bdc_message CHANGING cs_result TYPE ty_result.
+  DATA: lv_message TYPE char255, lv_error TYPE abap_bool.
+  CLEAR: cs_result-status, cs_result-message, lv_error.
+
+  LOOP AT gt_msg INTO gs_msg.
+    CLEAR lv_message.
+    CALL FUNCTION 'MESSAGE_TEXT_BUILD'
+      EXPORTING
+        msgid = gs_msg-msgid  msgnr = gs_msg-msgnr
+        msgv1 = gs_msg-msgv1  msgv2 = gs_msg-msgv2
+        msgv3 = gs_msg-msgv3  msgv4 = gs_msg-msgv4
+      IMPORTING
+        message_text_output = lv_message.
+
+    IF cs_result-message IS INITIAL.
+      cs_result-message = lv_message.
+    ELSE.
+      CONCATENATE cs_result-message lv_message INTO cs_result-message SEPARATED BY ' | '.
+    ENDIF.
+
+    IF gs_msg-msgtyp = 'E' OR gs_msg-msgtyp = 'A' OR gs_msg-msgtyp = 'X'.
+      lv_error = abap_true.
+    ENDIF.
+  ENDLOOP.
+
+  IF lv_error = abap_true.
+    cs_result-status = 'ERROR'.
+  ELSE.
+    cs_result-status = 'SUCCESS'.
+    IF cs_result-message IS INITIAL.
+      cs_result-message = 'Asset created successfully'.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+FORM display_alv.
+  DATA: lo_alv TYPE REF TO cl_salv_table, lo_columns TYPE REF TO cl_salv_columns_table.
+  TRY.
+      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_result ).
+      lo_alv->get_functions( )->set_all( abap_true ).
+      lo_columns = lo_alv->get_columns( ).
+      lo_columns->set_optimize( abap_true ).
+      PERFORM set_col USING lo_columns 'ROW_NO'  'Row'       'Row'              'Excel Row Number'.
+      PERFORM set_col USING lo_columns 'ANLKL'   'Asset Cl'  'Asset Class'      'Asset Class'.
+      PERFORM set_col USING lo_columns 'BUKRS'   'Co.Code'   'Company Code'     'Company Code'.
+      PERFORM set_col USING lo_columns 'TXT50'   'Desc.'     'Description'      'Asset Description'.
+      PERFORM set_col USING lo_columns 'KOSTL'   'Cost Ctr'  'Cost Center'      'Cost Center'.
+      PERFORM set_col USING lo_columns 'WERKS'   'Plant'     'Plant'            'Plant'.
+      PERFORM set_col USING lo_columns 'AIBN1'   'Inv.No'    'Inventory No'     'Inventory Number'.
+      PERFORM set_col USING lo_columns 'EAUFN'   'Order'     'Order'            'Order Number'.
+      PERFORM set_col USING lo_columns 'AFASL'   'Depr.Key'  'Depreciation Key' 'Depreciation Key'.
+      PERFORM set_col USING lo_columns 'STATUS'  'Status'    'BDC Status'       'BDC Processing Status'.
+      PERFORM set_col USING lo_columns 'MESSAGE' 'Message'   'BDC Message'      'BDC Processing Message'.
+      lo_alv->display( ).
+    CATCH cx_salv_msg INTO DATA(lx_salv).
+      MESSAGE lx_salv->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+
+FORM set_col USING io_columns TYPE REF TO cl_salv_columns_table iv_name TYPE lvc_fname iv_short TYPE scrtext_s iv_medium TYPE scrtext_m iv_long TYPE scrtext_l.
+  DATA lo_column TYPE REF TO cl_salv_column.
+  TRY.
+      lo_column = io_columns->get_column( iv_name ).
+      lo_column->set_short_text( iv_short ).
+      lo_column->set_medium_text( iv_medium ).
+      lo_column->set_long_text( iv_long ).
+    CATCH cx_salv_not_found.
+  ENDTRY.
+ENDFORM.
+
+FORM download_template.
+  DATA: lv_filename TYPE string, lv_path TYPE string, lv_fullpath TYPE string,
+        lv_action TYPE i, lo_alv TYPE REF TO cl_salv_table,
+        lo_columns TYPE REF TO cl_salv_columns_table,
+        lv_xml TYPE xstring, lt_bin TYPE solix_tab, lv_len TYPE i.
+
+  cl_gui_frontend_services=>file_save_dialog(
+    EXPORTING window_title = 'Save Template' default_extension = 'xlsx' default_file_name = 'AS01_Template.xlsx'
+    CHANGING filename = lv_filename path = lv_path fullpath = lv_fullpath user_action = lv_action EXCEPTIONS OTHERS = 1 ).
+
+  IF sy-subrc <> 0 OR lv_action <> cl_gui_frontend_services=>action_ok.
+    RETURN.
+  ENDIF.
+
+  CLEAR gt_tmpl.
+  TRY.
+      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_tmpl ).
+      lo_columns = lo_alv->get_columns( ).
+      lo_columns->set_optimize( abap_true ).
+      PERFORM set_col USING lo_columns 'ANLKL'   'Asset Cl'  'Asset Class'          'Asset Class'.
+      PERFORM set_col USING lo_columns 'BUKRS'   'Co.Code'   'Company Code'         'Company Code'.
+      PERFORM set_col USING lo_columns 'NASSETS' 'No.Assets' 'Number of Assets'     'Number of Assets'.
+      PERFORM set_col USING lo_columns 'TXT50'   'Desc.'     'Description'          'Description'.
+      PERFORM set_col USING lo_columns 'KOSTL'   'Cost Ctr'  'Cost Center'          'Cost Center'.
+      PERFORM set_col USING lo_columns 'WERKS'   'Plant'     'Plant'                'Plant'.
+      PERFORM set_col USING lo_columns 'AIBN1'   'Org.Asst'    'Org Asset'     'Original Asset'.
+      PERFORM set_col USING lo_columns 'AIBN2'   'Asst.SubNo'    'Asset Subnumber'  'Asset Subnumber'.
+      PERFORM set_col USING lo_columns 'EAUFN'   'Inv.Order'     'Invest. Order'                'Investment Order'.
+      PERFORM set_col USING lo_columns 'AFASL'   'Depr.Key'  'Depreciation Key'     'Depreciation Key'.
+      PERFORM set_col USING lo_columns 'NDJAR'   'Use Life'  'Useful Life'          'Useful Life'.
+      lv_xml = lo_alv->to_xml( if_salv_bs_xml=>c_type_xlsx ).
+    CATCH cx_salv_msg INTO DATA(lx_salv).
+      MESSAGE lx_salv->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+  lv_len = xstrlen( lv_xml ).
+  lt_bin = cl_bcs_convert=>xstring_to_solix( iv_xstring = lv_xml ).
+  cl_gui_frontend_services=>gui_download( EXPORTING bin_filesize = lv_len filename = lv_fullpath filetype = 'BIN' CHANGING data_tab = lt_bin EXCEPTIONS OTHERS = 1 ).
+
+  IF sy-subrc = 0.
+    MESSAGE |Template downloaded: { lv_fullpath }| TYPE 'S'.
+  ELSE.
+    MESSAGE 'Error while downloading template' TYPE 'E'.
+  ENDIF.
+ENDFORM.
