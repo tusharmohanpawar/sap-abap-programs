@@ -3,6 +3,14 @@
 *&---------------------------------------------------------------------*
 *& AS11 - Create Asset (Post-Capitalization) BDC
 *&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+* PROGRAM TITLE : ZAS11
+* MODULE        : FICO
+* PROGRAM TYPE  : AS11 BDC
+* CREATED BY    : TUSHAR PAWAR
+* FUNCTIONAL    : VRUSHALI NALAWADE/PRASHANT KOTE
+* T-CODE        : ZAS11
+*&---------------------------------------------------------------------*
 *& CHANGE LOG:
 *& - Vendor (LIFNR) column removed from Excel template (auto-populates
 *&   in AS11 from Original Asset AIBN1).
@@ -10,9 +18,16 @@
 *& - ANLA-LIFNR BDC field removed (do NOT send blank -> would clear
 *&   auto-populated vendor).
 *& - Vendor column removed from ALV result display.
+*& - 4 Depreciation columns added (AFASL1/NDJAR1/AFASL2/NDJAR2) —
+*&   Excel cols 11-14, BDC fields ANLB-AFASL(01)/NDJAR(01)/AFASL(03)/
+*&   NDJAR(03). BDC_FIELD now skips empty values so asset-class
+*&   depreciation defaults are NOT wiped when user leaves them blank.
 *&---------------------------------------------------------------------*
 REPORT zas11_bdc NO STANDARD PAGE HEADING LINE-SIZE 255.
 
+*----------------------------------------------------------------------*
+* TYPES
+*----------------------------------------------------------------------*
 TYPES: BEGIN OF ty_excel,
          anln1   TYPE char18,   " Asset Number (External)
          bukrs   TYPE char4,    " Company Code
@@ -24,6 +39,11 @@ TYPES: BEGIN OF ty_excel,
          aibn1   TYPE char20,   " Original Asset (vendor auto-derives)
          aibn2   TYPE char10,   " Inventory Subnumber
          eaufn   TYPE char12,   " Order
+         " ── NEW ──
+         afasl1  TYPE char4,    " Dep Key 1 (Area 01)
+         ndjar1  TYPE char3,    " Useful Life 1 (Area 01)
+         afasl2  TYPE char4,    " Dep Key 2 (Area 03)
+         ndjar2  TYPE char3,    " Useful Life 2 (Area 03)
        END OF ty_excel.
 
 TYPES: BEGIN OF ty_result,
@@ -49,8 +69,16 @@ TYPES: BEGIN OF ty_tmpl,
          aibn1   TYPE c LENGTH 20,
          aibn2   TYPE c LENGTH 10,
          eaufn   TYPE c LENGTH 20,
+         " ── NEW ──
+         afasl1  TYPE c LENGTH 10,
+         ndjar1  TYPE c LENGTH 10,
+         afasl2  TYPE c LENGTH 10,
+         ndjar2  TYPE c LENGTH 10,
        END OF ty_tmpl.
 
+*----------------------------------------------------------------------*
+* DATA
+*----------------------------------------------------------------------*
 DATA:
   gt_excel  TYPE STANDARD TABLE OF ty_excel,
   gs_excel  TYPE ty_excel.
@@ -74,6 +102,9 @@ DATA:
   gv_filename TYPE string,
   gv_xstring  TYPE xstring.
 
+*----------------------------------------------------------------------*
+* SELECTION SCREEN
+*----------------------------------------------------------------------*
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 PARAMETERS:
   p_file   TYPE rlgrap-filename,
@@ -94,19 +125,29 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
   PERFORM get_file.
 
 START-OF-SELECTION.
+  IF p_file IS INITIAL.
+    MESSAGE 'Please select an Excel file' TYPE 'S' DISPLAY LIKE 'E'.
+    RETURN.
+  ENDIF.
+
   PERFORM upload_excel.
+
   IF gt_excel IS INITIAL.
     MESSAGE 'No valid records found in Excel file' TYPE 'E'.
+    RETURN.
   ENDIF.
+
   PERFORM process_bdc.
   PERFORM display_alv.
 
-*---------------------------------------------------------------------*
-* FORM GET_FILE
-*---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  GET_FILE
+*&---------------------------------------------------------------------*
 FORM get_file.
-  DATA: lt_file_table TYPE filetable, ls_file_table TYPE file_table,
-        lv_rc TYPE i, lv_action TYPE i.
+  DATA: lt_file_table TYPE filetable,
+        ls_file_table TYPE file_table,
+        lv_rc         TYPE i,
+        lv_action     TYPE i.
 
   CALL METHOD cl_gui_frontend_services=>file_open_dialog
     EXPORTING
@@ -128,15 +169,19 @@ FORM get_file.
   ENDIF.
 ENDFORM.
 
-*---------------------------------------------------------------------*
-* FORM UPLOAD_EXCEL  -- 10-column layout (no vendor)
-*---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  UPLOAD_EXCEL  -- 14-column layout (with depreciation)
+*&---------------------------------------------------------------------*
 FORM upload_excel.
-  DATA: lt_bin TYPE solix_tab, lv_len TYPE i.
-  DATA: lo_excel TYPE REF TO cl_fdt_xl_spreadsheet, lo_data TYPE REF TO data,
+  DATA: lt_bin TYPE solix_tab,
+        lv_len TYPE i.
+  DATA: lo_excel      TYPE REF TO cl_fdt_xl_spreadsheet,
+        lo_data       TYPE REF TO data,
         lt_worksheets TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
-        lv_worksheet TYPE string.
-  FIELD-SYMBOLS: <lt_data> TYPE STANDARD TABLE, <ls_data> TYPE any, <lv_data> TYPE any.
+        lv_worksheet  TYPE string.
+  FIELD-SYMBOLS: <lt_data> TYPE STANDARD TABLE,
+                 <ls_data> TYPE any,
+                 <lv_data> TYPE any.
 
   gv_filename = p_file.
 
@@ -148,6 +193,7 @@ FORM upload_excel.
 
   IF sy-subrc <> 0.
     MESSAGE 'Error while uploading Excel file' TYPE 'E'.
+    RETURN.
   ENDIF.
 
   gv_xstring = cl_bcs_convert=>solix_to_xstring( it_solix = lt_bin ).
@@ -156,6 +202,7 @@ FORM upload_excel.
       CREATE OBJECT lo_excel EXPORTING document_name = gv_filename xdocument = gv_xstring.
     CATCH cx_fdt_excel_core INTO DATA(lx_excel).
       MESSAGE lx_excel->get_text( ) TYPE 'E'.
+      RETURN.
   ENDTRY.
 
   CALL METHOD lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names
@@ -169,6 +216,7 @@ FORM upload_excel.
         RECEIVING itab = lo_data.
     CATCH cx_fdt_excel_core INTO lx_excel.
       MESSAGE lx_excel->get_text( ) TYPE 'E'.
+      RETURN.
   ENDTRY.
 
   ASSIGN lo_data->* TO <lt_data>.
@@ -177,7 +225,7 @@ FORM upload_excel.
     IF sy-tabix = 1. CONTINUE. ENDIF. " Skip header
 
     CLEAR gs_excel.
-    " NEW COLUMN ORDER (vendor removed)
+
     ASSIGN COMPONENT 1  OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-anln1   = <lv_data>. ENDIF.
     ASSIGN COMPONENT 2  OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-bukrs   = <lv_data>. ENDIF.
     ASSIGN COMPONENT 3  OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-nassets = <lv_data>. ENDIF.
@@ -189,12 +237,25 @@ FORM upload_excel.
     ASSIGN COMPONENT 9  OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-aibn2   = <lv_data>. ENDIF.
     ASSIGN COMPONENT 10 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-eaufn   = <lv_data>. ENDIF.
 
-    CONDENSE: gs_excel-anln1, gs_excel-bukrs, gs_excel-nassets, gs_excel-txt50,
-              gs_excel-anlhtxt, gs_excel-kostl, gs_excel-werks,
-              gs_excel-aibn1, gs_excel-aibn2, gs_excel-eaufn.
+    " ── NEW 4 COLUMNS ──
+    ASSIGN COMPONENT 11 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-afasl1  = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 12 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-ndjar1  = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 13 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-afasl2  = <lv_data>. ENDIF.
+    ASSIGN COMPONENT 14 OF STRUCTURE <ls_data> TO <lv_data>. IF sy-subrc = 0. gs_excel-ndjar2  = <lv_data>. ENDIF.
 
-    TRANSLATE: gs_excel-bukrs TO UPPER CASE, gs_excel-kostl TO UPPER CASE,
-               gs_excel-werks TO UPPER CASE, gs_excel-eaufn TO UPPER CASE.
+    CONDENSE: gs_excel-anln1,   gs_excel-bukrs,   gs_excel-nassets,
+              gs_excel-txt50,   gs_excel-anlhtxt, gs_excel-kostl,
+              gs_excel-werks,   gs_excel-aibn1,   gs_excel-aibn2,
+              gs_excel-eaufn,
+              gs_excel-afasl1,  gs_excel-ndjar1,
+              gs_excel-afasl2,  gs_excel-ndjar2.
+
+    TRANSLATE: gs_excel-bukrs  TO UPPER CASE,
+               gs_excel-kostl  TO UPPER CASE,
+               gs_excel-werks  TO UPPER CASE,
+               gs_excel-eaufn  TO UPPER CASE,
+               gs_excel-afasl1 TO UPPER CASE,
+               gs_excel-afasl2 TO UPPER CASE.
 
     IF gs_excel-nassets IS INITIAL. gs_excel-nassets = '1'. ENDIF.
 
@@ -206,9 +267,9 @@ FORM upload_excel.
   ENDLOOP.
 ENDFORM.
 
-*---------------------------------------------------------------------*
-* FORM PROCESS_BDC
-*---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  PROCESS_BDC
+*&---------------------------------------------------------------------*
 FORM process_bdc.
   DATA: lv_row TYPE i.
 
@@ -226,50 +287,63 @@ FORM process_bdc.
 
     " SCREEN 1: 0110 Initial Screen
     PERFORM bdc_dynpro USING 'SAPLAIST' '0110'.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLA-ANLN1'.
-    PERFORM bdc_field  USING 'BDC_OKCODE' '/00'.
-    PERFORM bdc_field  USING 'ANLA-ANLN1' gs_excel-anln1.
-    PERFORM bdc_field  USING 'ANLA-BUKRS' gs_excel-bukrs.
+    PERFORM bdc_field  USING 'BDC_CURSOR'    'ANLA-ANLN1'.
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '/00'.
+    PERFORM bdc_field  USING 'ANLA-ANLN1'    gs_excel-anln1.
+    PERFORM bdc_field  USING 'ANLA-BUKRS'    gs_excel-bukrs.
     PERFORM bdc_field  USING 'RA02S-NASSETS' gs_excel-nassets.
 
     " SCREEN 2: 1000 General Tab
     PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLA-TXT50'.
-    PERFORM bdc_field  USING 'BDC_OKCODE' '=TAB02'.
-    PERFORM bdc_field  USING 'ANLA-TXT50' gs_excel-txt50.
-    PERFORM bdc_field  USING 'ANLH-ANLHTXT' gs_excel-anlhtxt.
+    PERFORM bdc_field  USING 'BDC_CURSOR'    'ANLA-TXT50'.
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '=TAB02'.
+    PERFORM bdc_field  USING 'ANLA-TXT50'    gs_excel-txt50.
+    PERFORM bdc_field  USING 'ANLH-ANLHTXT'  gs_excel-anlhtxt.
 
     " SCREEN 3: 1000 Time-Dependent Tab
     PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLZ-KOSTL'.
-    PERFORM bdc_field  USING 'BDC_OKCODE' '=TAB03'.
-    PERFORM bdc_field  USING 'ANLZ-KOSTL' gs_excel-kostl.
-    PERFORM bdc_field  USING 'ANLZ-WERKS' gs_excel-werks.
+    PERFORM bdc_field  USING 'BDC_CURSOR'    'ANLZ-KOSTL'.
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '=TAB03'.
+    PERFORM bdc_field  USING 'ANLZ-KOSTL'    gs_excel-kostl.
+    PERFORM bdc_field  USING 'ANLZ-WERKS'    gs_excel-werks.
 
     " SCREEN 4: 1000 Allocations Tab
     PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLA-ORD41'.
-    PERFORM bdc_field  USING 'BDC_OKCODE' '=TAB04'.
+    PERFORM bdc_field  USING 'BDC_CURSOR'    'ANLA-ORD41'.
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '=TAB04'.
 
     " SCREEN 5: 1000 Origin Tab
     " NOTE: ANLA-LIFNR NOT SENT -> vendor auto-populates from AIBN1.
     PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
-    PERFORM bdc_field  USING 'BDC_OKCODE' '=TAB07'.
-    PERFORM bdc_field  USING 'ANLA-AIBN1' gs_excel-aibn1.
-    PERFORM bdc_field  USING 'ANLA-AIBN2' gs_excel-aibn2.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLA-EAUFN'.
-    PERFORM bdc_field  USING 'ANLA-EAUFN' gs_excel-eaufn.
-
-    " SCREEN 6: 1000 Leasing Tab / Save
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '=TAB07'.
+    PERFORM bdc_field  USING 'ANLA-AIBN1'    gs_excel-aibn1.
+    PERFORM bdc_field  USING 'ANLA-AIBN2'    gs_excel-aibn2.
+    PERFORM bdc_field  USING 'BDC_CURSOR'    'ANLA-EAUFN'.
+    PERFORM bdc_field  USING 'ANLA-EAUFN'    gs_excel-eaufn.
+    " ── NEW SCREEN 6: 1000 navigate to Depreciation Areas ──
     PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
-    PERFORM bdc_field  USING 'BDC_OKCODE' '=BUCH'.
-    PERFORM bdc_field  USING 'BDC_CURSOR' 'ANLA-LEART'.
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '=TAB08'.
+    " REMOVED BDC_CURSOR HERE completely
+
+    " ── NEW SCREEN 7: 1000 submit Depreciation Areas ──
+    PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '/00'.
+    PERFORM bdc_field  USING 'BDC_CURSOR'    'ANLB-AFASL(01)'. " <-- SAFE CURSOR
+    PERFORM bdc_field  USING 'ANLB-AFASL(01)' gs_excel-afasl1.
+    PERFORM bdc_field  USING 'ANLB-NDJAR(01)' gs_excel-ndjar1.
+    PERFORM bdc_field  USING 'ANLB-AFASL(03)' gs_excel-afasl2.
+    PERFORM bdc_field  USING 'ANLB-NDJAR(03)' gs_excel-ndjar2.
+
+    " ── SCREEN 8 (was 6): 1000 Save ──
+    PERFORM bdc_dynpro USING 'SAPLAIST' '1000'.
+    PERFORM bdc_field  USING 'BDC_OKCODE'    '=BUCH'.
+    PERFORM bdc_field  USING 'BDC_CURSOR'    'ANLB-AFASL(01)'. " <-- SAFE CURSOR
 
     " Execute BDC
     CALL TRANSACTION 'AS11'
-      USING gt_bdcdata
-      MODE bdc_mode
-      UPDATE 'S'
+      USING    gt_bdcdata
+      MODE     bdc_mode
+      UPDATE   'S'
       MESSAGES INTO gt_msg.
 
     PERFORM get_bdc_message CHANGING gs_result.
@@ -277,10 +351,11 @@ FORM process_bdc.
   ENDLOOP.
 ENDFORM.
 
-*---------------------------------------------------------------------*
-* Standard BDC Helpers, ALV, and Message Builders
-*---------------------------------------------------------------------*
-FORM bdc_dynpro USING p_program TYPE bdcdata-program p_dynpro TYPE bdcdata-dynpro.
+*&---------------------------------------------------------------------*
+*&      Form  BDC_DYNPRO
+*&---------------------------------------------------------------------*
+FORM bdc_dynpro USING p_program TYPE bdcdata-program
+                      p_dynpro  TYPE bdcdata-dynpro.
   CLEAR gs_bdcdata.
   gs_bdcdata-program  = p_program.
   gs_bdcdata-dynpro   = p_dynpro.
@@ -288,22 +363,40 @@ FORM bdc_dynpro USING p_program TYPE bdcdata-program p_dynpro TYPE bdcdata-dynpr
   APPEND gs_bdcdata TO gt_bdcdata.
 ENDFORM.
 
-FORM bdc_field USING p_fnam TYPE bdcdata-fnam p_fval TYPE any.
+*&---------------------------------------------------------------------*
+*&      Form  BDC_FIELD  --  NOW skips empty values (critical!)
+*&---------------------------------------------------------------------*
+FORM bdc_field USING p_fnam TYPE bdcdata-fnam
+                     p_fval TYPE any.
   CLEAR gs_bdcdata.
+  IF p_fval IS INITIAL
+     AND p_fnam <> 'BDC_OKCODE'
+     AND p_fnam <> 'BDC_CURSOR'
+     AND p_fnam <> 'BDC_SUBSCR'.
+    RETURN.
+  ENDIF.
   gs_bdcdata-fnam = p_fnam.
   gs_bdcdata-fval = p_fval.
   APPEND gs_bdcdata TO gt_bdcdata.
 ENDFORM.
 
+*&---------------------------------------------------------------------*
+*&      Form  GET_BDC_MESSAGE
+*&---------------------------------------------------------------------*
 FORM get_bdc_message CHANGING cs_result TYPE ty_result.
-  DATA: lv_message TYPE char255, lv_error TYPE abap_bool.
+  DATA: lv_message TYPE char255,
+        lv_error   TYPE abap_bool.
+
   CLEAR: cs_result-status, cs_result-message, lv_error.
 
   LOOP AT gt_msg INTO gs_msg.
     CLEAR lv_message.
     CALL FUNCTION 'MESSAGE_TEXT_BUILD'
-      EXPORTING msgid = gs_msg-msgid msgnr = gs_msg-msgnr msgv1 = gs_msg-msgv1 msgv2 = gs_msg-msgv2 msgv3 = gs_msg-msgv3 msgv4 = gs_msg-msgv4
-      IMPORTING message_text_output = lv_message.
+      EXPORTING
+        msgid = gs_msg-msgid msgnr = gs_msg-msgnr msgv1 = gs_msg-msgv1
+        msgv2 = gs_msg-msgv2 msgv3 = gs_msg-msgv3 msgv4 = gs_msg-msgv4
+      IMPORTING
+        message_text_output = lv_message.
 
     IF cs_result-message IS INITIAL.
       cs_result-message = lv_message.
@@ -312,6 +405,10 @@ FORM get_bdc_message CHANGING cs_result TYPE ty_result.
     ENDIF.
 
     IF gs_msg-msgtyp = 'E' OR gs_msg-msgtyp = 'A' OR gs_msg-msgtyp = 'X'.
+      lv_error = abap_true.
+    ENDIF.
+
+    IF gs_msg-msgid = '00' AND gs_msg-msgnr = '344'.
       lv_error = abap_true.
     ENDIF.
   ENDLOOP.
@@ -326,13 +423,22 @@ FORM get_bdc_message CHANGING cs_result TYPE ty_result.
   ENDIF.
 ENDFORM.
 
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_ALV
+*&---------------------------------------------------------------------*
 FORM display_alv.
-  DATA: lo_alv TYPE REF TO cl_salv_table, lo_columns TYPE REF TO cl_salv_columns_table.
+  DATA: lo_alv     TYPE REF TO cl_salv_table,
+        lo_columns TYPE REF TO cl_salv_columns_table.
+
   TRY.
-      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_result ).
+      cl_salv_table=>factory(
+        IMPORTING r_salv_table = lo_alv
+        CHANGING  t_table      = gt_result ).
+
       lo_alv->get_functions( )->set_all( abap_true ).
       lo_columns = lo_alv->get_columns( ).
       lo_columns->set_optimize( abap_true ).
+
       PERFORM set_col USING lo_columns 'ROW_NO'  'Row'       'Row'              'Excel Row Number'.
       PERFORM set_col USING lo_columns 'ANLN1'   'Asset No'  'Asset Number'     'Asset Number'.
       PERFORM set_col USING lo_columns 'BUKRS'   'Co.Code'   'Company Code'     'Company Code'.
@@ -342,42 +448,73 @@ FORM display_alv.
       PERFORM set_col USING lo_columns 'EAUFN'   'Order'     'Order'            'Order Number'.
       PERFORM set_col USING lo_columns 'STATUS'  'Status'    'BDC Status'       'BDC Processing Status'.
       PERFORM set_col USING lo_columns 'MESSAGE' 'Message'   'BDC Message'      'BDC Processing Message'.
+
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_salv).
       MESSAGE lx_salv->get_text( ) TYPE 'E'.
   ENDTRY.
 ENDFORM.
 
-FORM set_col USING io_columns TYPE REF TO cl_salv_columns_table iv_name TYPE lvc_fname iv_short TYPE scrtext_s iv_medium TYPE scrtext_m iv_long TYPE scrtext_l.
+*&---------------------------------------------------------------------*
+*&      Form  SET_COL
+*&---------------------------------------------------------------------*
+FORM set_col USING io_columns TYPE REF TO cl_salv_columns_table
+                   iv_name    TYPE lvc_fname
+                   iv_short   TYPE scrtext_s
+                   iv_medium  TYPE scrtext_m
+                   iv_long    TYPE scrtext_l.
   DATA lo_column TYPE REF TO cl_salv_column.
   TRY.
       lo_column = io_columns->get_column( iv_name ).
-      lo_column->set_short_text( iv_short ).
+      lo_column->set_short_text(  iv_short  ).
       lo_column->set_medium_text( iv_medium ).
-      lo_column->set_long_text( iv_long ).
+      lo_column->set_long_text(   iv_long   ).
     CATCH cx_salv_not_found.
   ENDTRY.
 ENDFORM.
 
-*---------------------------------------------------------------------*
-* FORM DOWNLOAD_TEMPLATE  -- Vendor column removed
-*---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  DOWNLOAD_TEMPLATE  -- 14 columns (with depreciation)
+*&---------------------------------------------------------------------*
 FORM download_template.
-  DATA: lv_filename TYPE string, lv_path TYPE string, lv_fullpath TYPE string,
-        lv_action TYPE i, lo_alv TYPE REF TO cl_salv_table, lo_columns TYPE REF TO cl_salv_columns_table,
-        lv_xml TYPE xstring, lt_bin TYPE solix_tab, lv_len TYPE i.
+  DATA: lv_filename TYPE string,
+        lv_path     TYPE string,
+        lv_fullpath TYPE string,
+        lv_action   TYPE i,
+        lo_alv      TYPE REF TO cl_salv_table,
+        lo_columns  TYPE REF TO cl_salv_columns_table,
+        lv_xml      TYPE xstring,
+        lt_bin      TYPE solix_tab,
+        lv_len      TYPE i.
 
   cl_gui_frontend_services=>file_save_dialog(
-    EXPORTING window_title = 'Save Template' default_extension = 'xlsx' default_file_name = 'AS11_Template.xlsx'
-    CHANGING filename = lv_filename path = lv_path fullpath = lv_fullpath user_action = lv_action EXCEPTIONS OTHERS = 1 ).
+    EXPORTING
+      window_title      = 'Save AS11 Template'
+      default_extension = 'xlsx'
+      default_file_name = 'AS11_Template.xlsx'
+      file_filter       = 'Excel Files (*.xlsx)|*.xlsx|'
+    CHANGING
+      filename          = lv_filename
+      path              = lv_path
+      fullpath          = lv_fullpath
+      user_action       = lv_action
+    EXCEPTIONS
+      OTHERS            = 1 ).
 
-  IF sy-subrc <> 0 OR lv_action <> cl_gui_frontend_services=>action_ok. RETURN. ENDIF.
+  IF sy-subrc <> 0 OR lv_action <> cl_gui_frontend_services=>action_ok.
+    RETURN.
+  ENDIF.
+
   CLEAR gt_tmpl.
 
   TRY.
-      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_tmpl ).
+      cl_salv_table=>factory(
+        IMPORTING r_salv_table = lo_alv
+        CHANGING  t_table      = gt_tmpl ).
+
       lo_columns = lo_alv->get_columns( ).
       lo_columns->set_optimize( abap_true ).
+
       PERFORM set_col USING lo_columns 'ANLN1'   'Asset No'  'Asset Number'         'Asset Number'.
       PERFORM set_col USING lo_columns 'BUKRS'   'Co.Code'   'Company Code'         'Company Code'.
       PERFORM set_col USING lo_columns 'NASSETS' 'No.Assets' 'Number of Assets'     'Number of Assets'.
@@ -388,90 +525,36 @@ FORM download_template.
       PERFORM set_col USING lo_columns 'AIBN1'   'Org.Asst'  'Original Asset'       'Original Asset'.
       PERFORM set_col USING lo_columns 'AIBN2'   'Asst.SubNo' 'Asset SubNumber'     'Asset Sub Number'.
       PERFORM set_col USING lo_columns 'EAUFN'   'Order'     'Order'                'Order'.
+
+      " ── NEW 4 COLUMNS ──
+      PERFORM set_col USING lo_columns 'AFASL1'  'Dep Key 1' 'Depreciation Key 1'   'Depreciation Key (Area 01)'.
+      PERFORM set_col USING lo_columns 'NDJAR1'  'Life 1'    'Useful Life 1'        'Useful Life (Area 01)'.
+      PERFORM set_col USING lo_columns 'AFASL2'  'Dep Key 2' 'Depreciation Key 2'   'Depreciation Key (Area 03)'.
+      PERFORM set_col USING lo_columns 'NDJAR2'  'Life 2'    'Useful Life 2'        'Useful Life (Area 03)'.
+
       lv_xml = lo_alv->to_xml( if_salv_bs_xml=>c_type_xlsx ).
+
     CATCH cx_salv_msg INTO DATA(lx_salv).
       MESSAGE lx_salv->get_text( ) TYPE 'E'.
+      RETURN.
   ENDTRY.
 
   lv_len = xstrlen( lv_xml ).
   lt_bin = cl_bcs_convert=>xstring_to_solix( iv_xstring = lv_xml ).
-  cl_gui_frontend_services=>gui_download( EXPORTING bin_filesize = lv_len filename = lv_fullpath filetype = 'BIN' CHANGING data_tab = lt_bin EXCEPTIONS OTHERS = 1 ).
+
+  cl_gui_frontend_services=>gui_download(
+    EXPORTING
+      bin_filesize = lv_len
+      filename     = lv_fullpath
+      filetype     = 'BIN'
+    CHANGING
+      data_tab     = lt_bin
+    EXCEPTIONS
+      OTHERS       = 1 ).
 
   IF sy-subrc = 0.
     MESSAGE |Template downloaded: { lv_fullpath }| TYPE 'S'.
+  ELSE.
+    MESSAGE 'Error while downloading template' TYPE 'E'.
   ENDIF.
 ENDFORM.
-
-
-
-
-
-*report ZAS11
-*       no standard page heading line-size 255.
-*
-** Include bdcrecx1_s:
-** The call transaction using is called WITH AUTHORITY-CHECK!
-** If you have own auth.-checks you can use include bdcrecx1 instead.
-*include bdcrecx1_s.
-*
-*start-of-selection.
-*
-*perform open_group.
-*
-*perform bdc_dynpro      using 'SAPLAIST' '0110'.
-*perform bdc_field       using 'BDC_CURSOR'
-*                              'ANLA-ANLN1'.
-*perform bdc_field       using 'BDC_OKCODE'
-*                              '/00'.
-*perform bdc_field       using 'ANLA-ANLN1'
-*                              '101099000000'.
-*perform bdc_field       using 'ANLA-BUKRS'
-*                              'SINT'.
-*perform bdc_field       using 'RA02S-NASSETS'
-*                              '1'.
-*perform bdc_dynpro      using 'SAPLAIST' '1000'.
-*perform bdc_field       using 'BDC_OKCODE'
-*                              '=TAB02'.
-*perform bdc_field       using 'BDC_CURSOR'
-*                              'ANLA-TXT50'.
-*perform bdc_field       using 'ANLA-TXT50'
-*                              'Tooling test1'.
-*perform bdc_field       using 'ANLH-ANLHTXT'
-*                              'Tooling test1'.
-*perform bdc_dynpro      using 'SAPLAIST' '1000'.
-*perform bdc_field       using 'BDC_OKCODE'
-*                              '=TAB03'.
-*perform bdc_field       using 'BDC_CURSOR'
-*                              'ANLZ-KOSTL'.
-*perform bdc_field       using 'ANLZ-KOSTL'
-*                              'ADMIN_HLCK'.
-*perform bdc_field       using 'ANLZ-WERKS'
-*                              'HLCK'.
-*perform bdc_dynpro      using 'SAPLAIST' '1000'.
-*perform bdc_field       using 'BDC_OKCODE'
-*                              '=TAB04'.
-*perform bdc_field       using 'BDC_CURSOR'
-*                              'ANLA-ORD41'.
-*perform bdc_dynpro      using 'SAPLAIST' '1000'.
-*perform bdc_field       using 'BDC_OKCODE'
-*                              '=TAB07'.
-*perform bdc_field       using 'ANLA-LIFNR'
-*                              '1000005'.
-*perform bdc_field       using 'GD_LIEFE'
-*                              'Cello pvt lmt'.
-*perform bdc_field       using 'ANLA-AIBN1'
-*                              '209800000235'.
-*perform bdc_field       using 'ANLA-AIBN2'
-*                              '7'.
-*perform bdc_field       using 'BDC_CURSOR'
-*                              'ANLA-EAUFN'.
-*perform bdc_field       using 'ANLA-EAUFN'
-*                              'Y23170LKSINT'.
-*perform bdc_dynpro      using 'SAPLAIST' '1000'.
-*perform bdc_field       using 'BDC_OKCODE'
-*                              '=BUCH'.
-*perform bdc_field       using 'BDC_CURSOR'
-*                              'ANLA-LEART'.
-*perform bdc_transaction using 'AS11'.
-*
-*perform close_group.
